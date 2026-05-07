@@ -37,7 +37,7 @@ from src.pdk.materials import (
     WAVELENGTH_UM,
     THICKNESS_SI_UM,
 )
-
+from src.pdk.specs import StripWaveguideSpec
 
 @dataclass(frozen=True)
 class WaveguideCrossSection:
@@ -241,8 +241,13 @@ def plot_width_sweep(
 
 
 if __name__ == "__main__":
-    xs = WaveguideCrossSection(width_um=0.5)
+    spec = StripWaveguideSpec(width_um=0.5)
 
+    xs = WaveguideCrossSection(
+        width_um=spec.width_um,
+        thickness_um=spec.thickness_um,
+        wavelength_um=spec.wavelength_um,
+    )
     print_cross_section(xs)
 
     n_min, n_max = estimate_effective_index_bounds(xs)

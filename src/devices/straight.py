@@ -6,7 +6,7 @@ import gdsfactory as gf
 from gdsfactory.gpdk import get_generic_pdk
 
 from src.pdk.cross_sections import strip
-
+from src.pdk.specs import StripWaveguideSpec
 
 get_generic_pdk().activate()
 
@@ -29,6 +29,8 @@ def straight_waveguide(length: float = 10.0, width: float = 0.5):
 
 
 if __name__ == "__main__":
-    c = straight_waveguide(length=10.0, width=0.5)
+    spec = StripWaveguideSpec(width_um=0.5)
+
+    c = straight_waveguide(length=10.0, width=spec.width_um)
     c.write_gds("straight_waveguide.gds")
     c.show()
