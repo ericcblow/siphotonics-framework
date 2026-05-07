@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+.env/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Generated layout files
+*.gds
+*.oas
+
+# Large/generated simulation files
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.mat
+
+# Simulation outputs
+data/fields/
+data/sparameters/
+data/sweeps/
+results/figures/
+runs/
+
+# Logs
+*.log
+
