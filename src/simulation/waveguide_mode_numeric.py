@@ -24,6 +24,8 @@ import csv
 import meep as mp
 from meep import mpb
 from scipy.optimize import brentq
+import contextlib
+import os
 
 from src.pdk.materials import SI_N_1550, SIO2_N_1550
 from src.pdk.specs import StripWaveguideSpec
@@ -127,10 +129,15 @@ def compare_against_eim(problem: NumericalWaveguideProblem) -> None:
     print()
     print("Reference EIM estimate")
     print("----------------------")
-    print(f"physical bounds:               {n_min:.4f} < n_eff < {n_max:.4f}")
-    print(f"EIM vertical slab n_eff:        {vertical_neff:.4f}")
-    print(f"EIM rectangular waveguide n_eff:{rectangular_neff:.4f}")
+    print(f"physical bounds:                {n_min:.4f} < n_eff < {n_max:.4f}")
+    print(f"EIM vertical slab n_eff:         {vertical_neff:.4f}")
+    print(f"EIM rectangular waveguide n_eff: {rectangular_neff:.4f}")
 
+def run_mpb_quietly(mode_solver: mpb.ModeSolver) -> None:
+    """Run MPB while suppressing verbose stdout output."""
+    with open(os.devnull, "w") as devnull:
+        with contextlib.redirect_stdout(devnull):
+            mode_solver.run()
 
 def solve_mpb_waveguide_neff(
     problem: NumericalWaveguideProblem,
@@ -195,7 +202,7 @@ def solve_mpb_waveguide_neff(
             k_points=[mp.Vector3(kx, 0, 0)],
         )
 
-        mode_solver.run()
+        run_mpb_quietly(mode_solver)
 
         return float(mode_solver.all_freqs[0][band_num - 1])
 
@@ -219,18 +226,6 @@ def sweep_resolution_mpb(
 
     This is a convergence check. A reliable numerical mode result should not
     change significantly as resolution increases.
-
-    Parameters
-    ----------
-    base_problem:
-        Baseline numerical waveguide problem.
-    resolutions_px_per_um:
-        List of spatial resolutions in pixels per micron.
-
-    Returns
-    -------
-    list[dict[str, float]]
-        One dictionary per resolution.
     """
     results = []
 
@@ -258,6 +253,7 @@ def sweep_resolution_mpb(
 
     return results
 
+
 def sweep_padding_mpb(
     base_problem: NumericalWaveguideProblem,
     paddings_um: list[float],
@@ -266,18 +262,6 @@ def sweep_padding_mpb(
 
     This is a domain-size convergence check. A reliable numerical mode result
     should not change significantly as the cladding padding increases.
-
-    Parameters
-    ----------
-    base_problem:
-        Baseline numerical waveguide problem.
-    paddings_um:
-        List of cladding padding values in microns.
-
-    Returns
-    -------
-    list[dict[str, float]]
-        One dictionary per padding value.
     """
     results = []
 
@@ -306,6 +290,7 @@ def sweep_padding_mpb(
         )
 
     return results
+
 
 def save_numeric_sweep_csv(
     results: list[dict[str, float]],
@@ -351,7 +336,6 @@ def main() -> None:
     print("----------------------")
 
     numerical_neff = solve_mpb_waveguide_neff(problem)
-
     print(f"MPB numerical n_eff: {numerical_neff:.4f}")
 
     print()
@@ -400,7 +384,7 @@ def main() -> None:
     print("Status")
     print("------")
     print("Numerical problem scaffold created successfully.")
-    print("Next step: add convergence checks for padding and mode identity.")
+    print("Next step: add plots and reduce MPB verbosity.")
 
 
 if __name__ == "__main__":
