@@ -217,6 +217,40 @@ def solve_mpb_waveguide_neff(
 
     return float(numerical_neff)
 
+def sweep_bands_mpb(
+    problem: NumericalWaveguideProblem,
+    band_nums: list[int],
+) -> list[dict[str, float | str]]:
+    """Estimate n_eff for several MPB bands.
+
+    This is a simple mode-identity diagnostic. Some bands may not have a
+    guided solution at the target wavelength within the search interval.
+    Those bands are reported as failed instead of crashing the script.
+    """
+    results = []
+
+    for band_num in band_nums:
+        try:
+            neff = solve_mpb_waveguide_neff(problem, band_num=band_num)
+
+            results.append(
+                {
+                    "band_num": float(band_num),
+                    "numerical_neff": neff,
+                    "status": "ok",
+                }
+            )
+
+        except ValueError as error:
+            results.append(
+                {
+                    "band_num": float(band_num),
+                    "numerical_neff": float("nan"),
+                    "status": f"failed: {error}",
+                }
+            )
+
+    return results
 
 def sweep_resolution_mpb(
     base_problem: NumericalWaveguideProblem,
@@ -337,6 +371,26 @@ def main() -> None:
 
     numerical_neff = solve_mpb_waveguide_neff(problem)
     print(f"MPB numerical n_eff: {numerical_neff:.4f}")
+
+    print()
+    print("Band diagnostic at target wavelength")
+    print("------------------------------------")
+
+    band_results = sweep_bands_mpb(
+        problem=problem,
+        band_nums=[1, 2, 3, 4],
+    )
+
+    print("band_num, numerical_n_eff")
+    for row in band_results:
+        print(
+            f"{row['band_num']:.0f}, "
+            f"{row['numerical_neff']:.6f}"
+        )
+
+    band_csv = Path("data/sweeps/waveguide_mpb_band_diagnostic.csv")
+    save_numeric_sweep_csv(band_results, band_csv)
+    print(f"Saved band diagnostic to: {band_csv}")
 
     print()
     print("Resolution convergence sweep")
