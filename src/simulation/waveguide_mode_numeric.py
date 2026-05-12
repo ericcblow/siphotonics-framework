@@ -26,6 +26,7 @@ from meep import mpb
 from scipy.optimize import brentq
 import contextlib
 import os
+import matplotlib.pyplot as plt
 
 from src.pdk.materials import SI_N_1550, SIO2_N_1550
 from src.pdk.specs import StripWaveguideSpec
@@ -344,6 +345,73 @@ def save_numeric_sweep_csv(
         writer.writeheader()
         writer.writerows(results)
 
+def plot_resolution_sweep(
+    results: list[dict[str, float]],
+    output_path: str | Path,
+) -> None:
+    """Plot numerical n_eff versus MPB resolution."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    resolutions = [row["resolution_px_per_um"] for row in results]
+    neffs = [row["numerical_neff"] for row in results]
+
+    plt.figure()
+    plt.plot(resolutions, neffs, marker="o")
+    plt.xlabel("Resolution (px/um)")
+    plt.ylabel("Numerical n_eff")
+    plt.title("MPB resolution convergence")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+
+def plot_padding_sweep(
+    results: list[dict[str, float]],
+    output_path: str | Path,
+) -> None:
+    """Plot numerical n_eff versus cladding padding."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    paddings = [row["padding_um"] for row in results]
+    neffs = [row["numerical_neff"] for row in results]
+
+    plt.figure()
+    plt.plot(paddings, neffs, marker="o")
+    plt.xlabel("Padding (um)")
+    plt.ylabel("Numerical n_eff")
+    plt.title("MPB padding convergence")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+
+def plot_band_diagnostic(
+    results: list[dict[str, float | str]],
+    output_path: str | Path,
+) -> None:
+    """Plot numerical n_eff for successful MPB band roots."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    successful_results = [row for row in results if row["status"] == "ok"]
+
+    bands = [row["band_num"] for row in successful_results]
+    neffs = [row["numerical_neff"] for row in successful_results]
+
+    plt.figure()
+    plt.plot(bands, neffs, marker="o")
+    plt.xlabel("MPB band number")
+    plt.ylabel("Numerical n_eff")
+    plt.title("MPB band diagnostic at target wavelength")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
 
 def main() -> None:
     """Build and summarize the numerical mode problem."""
@@ -392,6 +460,10 @@ def main() -> None:
     save_numeric_sweep_csv(band_results, band_csv)
     print(f"Saved band diagnostic to: {band_csv}")
 
+    band_plot = Path("results/figures/waveguide_mpb_band_diagnostic.png")
+    plot_band_diagnostic(band_results, band_plot)
+    print(f"Saved band diagnostic plot to: {band_plot}")
+
     print()
     print("Resolution convergence sweep")
     print("----------------------------")
@@ -411,6 +483,10 @@ def main() -> None:
     resolution_csv = Path("data/sweeps/waveguide_mpb_resolution_sweep.csv")
     save_numeric_sweep_csv(resolution_results, resolution_csv)
     print(f"Saved resolution sweep to: {resolution_csv}")
+
+    resolution_plot = Path("results/figures/waveguide_mpb_resolution_sweep.png")
+    plot_resolution_sweep(resolution_results, resolution_plot)
+    print(f"Saved resolution sweep plot to: {resolution_plot}")
 
     print()
     print("Padding convergence sweep")
@@ -434,6 +510,10 @@ def main() -> None:
     save_numeric_sweep_csv(padding_results, padding_csv)
     print(f"Saved padding sweep to: {padding_csv}")
 
+    padding_plot = Path("results/figures/waveguide_mpb_padding_sweep.png")
+    plot_padding_sweep(padding_results, padding_plot)
+    print(f"Saved padding sweep plot to: {padding_plot}")
+    
     print()
     print("Status")
     print("------")
