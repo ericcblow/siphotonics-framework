@@ -16,8 +16,13 @@ The goal is not only to generate a simulations framework, but to create a learni
 
 Current focus:
 
-> Modes and effective index of a 500 nm × 220 nm SOI strip waveguide in oxide at 1550 nm.
-
+Added MPB band 1 field diagnostics:
+- saved total |E|² field plot
+- saved Ex/Ey/Ez component plot
+- computed component energy fractions
+- Ey dominates, supporting TE-like classification
+- band 1 is now a plausible TE-like core-guided mode candidate
+- still not fully validated because resolution/padding convergence is not clean
 ---
 
 ## User learning context
