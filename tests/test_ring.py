@@ -1,10 +1,15 @@
 # tests/test_ring.py
+import numpy as np
+import pytest
+
 
 from src.compact_models.ring import (
     RingResonatorSpec,
+    all_pass_ring_through_power,
     estimate_ring_fsr_nm,
     estimate_ring_fsr_um,
     ring_round_trip_length_um,
+    wavelength_grid_around_center,
 )
 
 
@@ -38,3 +43,97 @@ def test_larger_group_index_reduces_fsr():
 
     assert estimate_ring_fsr_nm(high_ng) < estimate_ring_fsr_nm(low_ng)
     
+
+def test_wavelength_grid_has_expected_length():
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=1.55,
+        span_nm=40.0,
+        num_points=2001,
+    )
+
+    assert len(wavelengths_um) == 2001
+    assert np.isclose(wavelengths_um[0], 1.53)
+    assert np.isclose(wavelengths_um[-1], 1.57)
+
+
+def test_all_pass_ring_transmission_is_bounded():
+    spec = RingResonatorSpec(
+        radius_um=10.0,
+        wavelength_um=1.55,
+        group_index=4.0,
+    )
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=1.55,
+        span_nm=40.0,
+        num_points=501,
+    )
+
+    transmission = all_pass_ring_through_power(
+        wavelengths_um=wavelengths_um,
+        spec=spec,
+        power_coupling=0.1,
+        round_trip_power_loss=0.02,
+    )
+
+    assert np.all(transmission >= 0)
+    assert np.all(transmission <= 1.0 + 1e-12)
+
+
+def test_all_pass_ring_spectrum_varies_with_wavelength():
+    spec = RingResonatorSpec(
+        radius_um=10.0,
+        wavelength_um=1.55,
+        group_index=4.0,
+    )
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=1.55,
+        span_nm=40.0,
+        num_points=501,
+    )
+
+    transmission = all_pass_ring_through_power(
+        wavelengths_um=wavelengths_um,
+        spec=spec,
+        power_coupling=0.1,
+        round_trip_power_loss=0.02,
+    )
+
+    assert np.max(transmission) - np.min(transmission) > 0.01
+
+
+def test_invalid_ring_coupling_raises_error():
+    spec = RingResonatorSpec()
+    wavelengths_um = wavelength_grid_around_center(1.55)
+
+    with pytest.raises(ValueError):
+        all_pass_ring_through_power(
+            wavelengths_um=wavelengths_um,
+            spec=spec,
+            power_coupling=-0.1,
+        )
+
+    with pytest.raises(ValueError):
+        all_pass_ring_through_power(
+            wavelengths_um=wavelengths_um,
+            spec=spec,
+            power_coupling=1.1,
+        )
+
+
+def test_invalid_ring_loss_raises_error():
+    spec = RingResonatorSpec()
+    wavelengths_um = wavelength_grid_around_center(1.55)
+
+    with pytest.raises(ValueError):
+        all_pass_ring_through_power(
+            wavelengths_um=wavelengths_um,
+            spec=spec,
+            round_trip_power_loss=-0.1,
+        )
+
+    with pytest.raises(ValueError):
+        all_pass_ring_through_power(
+            wavelengths_um=wavelengths_um,
+            spec=spec,
+            round_trip_power_loss=1.0,
+        )
