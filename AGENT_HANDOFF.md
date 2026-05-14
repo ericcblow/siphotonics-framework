@@ -40,6 +40,15 @@ Current caveat:
 - The result is now a reasonable engineering estimate, not just a rough candidate.
 - It is still not a final benchmark-validated value because we have not compared against an independent trusted mode solver or reference data.
 - Remaining numerical spread across padding is about ~0.08%.
+
+Added first ring compact-model utility:
+- estimates round-trip length
+- estimates FSR from group index
+- generates simple all-pass through-port spectrum
+- saves ring spectrum CSV and plot
+- added tests for FSR trends, transmission bounds, wavelength grid, and invalid coupling/loss values
+
+This connects the waveguide MPB group-index workflow to a ring-level compact model.
 ------
 
 
