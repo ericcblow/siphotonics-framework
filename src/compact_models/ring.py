@@ -20,9 +20,9 @@ from src.pdk.materials import WAVELENGTH_UM
 class RingResonatorSpec:
     """Basic ring resonator specification."""
 
-    radius_um: float = 10.0
+    radius_um: float = 8
     wavelength_um: float = WAVELENGTH_UM
-    group_index: float = 4.0
+    group_index: float = 4.0497
 
 
 def ring_round_trip_length_um(spec: RingResonatorSpec) -> float:
@@ -54,7 +54,7 @@ def estimate_ring_fsr_nm(spec: RingResonatorSpec) -> float:
 
 if __name__ == "__main__":
     spec = RingResonatorSpec(
-        radius_um=10.0,
+        radius_um=8.0,
         wavelength_um=1.55,
         group_index=4.0497,
     )
