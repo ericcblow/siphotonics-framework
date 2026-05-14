@@ -16,19 +16,32 @@ The goal is not only to generate a simulations framework, but to create a learni
 
 Current focus:
 
-Added MPB band 1 field diagnostics:
+Waveguide mode simulation and validation for a 500 nm × 220 nm SOI strip waveguide in oxide at 1550 nm.
+
+Completed MPB band 1 field diagnostics:
 - saved total |E|² field plot
 - saved Ex/Ey/Ez component plot
 - computed component energy fractions
 - Ey dominates, supporting TE-like classification
-- band 1 is now a plausible TE-like core-guided mode candidate
-- still not fully validated because resolution/padding convergence is not clean
+- band 1 is a plausible TE-like core-guided mode candidate
 
-Added resolution + polarization sweep for MPB band 1.
-Results from 30–80 px/um show Ey fraction remains ~0.752 and classification remains TE-like.
-Higher-resolution n_eff clusters around ~2.443.
-This improves confidence that band 1 is consistently the TE-like mode across resolution, though padding convergence and full validation remain open.
----
+Completed resolution + polarization sweep for MPB band 1:
+- results from 30–80 px/µm show Ey fraction remains ~0.752
+- classification remains TE-like across resolution
+- higher-resolution n_eff values cluster around ~2.443
+- this improves confidence that band 1 is consistently the same TE-like mode across resolution
+
+Updated numerical diagnostics to use 70 px/µm as the base resolution:
+- padding field comparison at 70 px/µm shows core-confined TE-like field profiles for padding 1.5–3.0 µm
+- n_eff is much more stable, approximately 2.4425–2.4445
+- current engineering estimate for MPB band 1 TE-like mode: n_eff ≈ 2.444
+
+Current caveat:
+- The result is now a reasonable engineering estimate, not just a rough candidate.
+- It is still not a final benchmark-validated value because we have not compared against an independent trusted mode solver or reference data.
+- Remaining numerical spread across padding is about ~0.08%.
+------
+
 
 ## User learning context
 
