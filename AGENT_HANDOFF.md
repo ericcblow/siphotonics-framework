@@ -1,56 +1,26 @@
 # Agent Handoff: Silicon Photonics Simulation Framework
 
-# Project purpose
+## Project purpose
 
 We are building an open-source silicon photonics device-physics and simulation framework step by step.
 
-The goal is not only to generate a simulations framework, but to create a learning enviroment for  integrated photonic device simulation practice:
+The goal is not only to generate a simulation framework, but to create a learning environment for integrated photonic device simulation practice:
 
 - layout-driven design with gdsfactory
 - shared specs between layout and simulation
 - analytic estimates before numerical simulation
 - eigenmode / MPB / Meep workflows
 - convergence testing
-- S-parameter and compact-model extraction later
+- field-profile and polarization diagnostics
+- wavelength sweeps and group-index extraction
+- compact-model extraction and device-level metrics
 - disciplined Git-based engineering workflow
 
-Current focus:
+Current broad focus:
 
-Waveguide mode simulation and validation for a 500 nm × 220 nm SOI strip waveguide in oxide at 1550 nm.
+> Build a practical, layout-aware silicon photonics simulation framework and use it to move from waveguide mode physics to ring-resonator compact modeling.
 
-Completed MPB band 1 field diagnostics:
-- saved total |E|² field plot
-- saved Ex/Ey/Ez component plot
-- computed component energy fractions
-- Ey dominates, supporting TE-like classification
-- band 1 is a plausible TE-like core-guided mode candidate
-
-Completed resolution + polarization sweep for MPB band 1:
-- results from 30–80 px/µm show Ey fraction remains ~0.752
-- classification remains TE-like across resolution
-- higher-resolution n_eff values cluster around ~2.443
-- this improves confidence that band 1 is consistently the same TE-like mode across resolution
-
-Updated numerical diagnostics to use 70 px/µm as the base resolution:
-- padding field comparison at 70 px/µm shows core-confined TE-like field profiles for padding 1.5–3.0 µm
-- n_eff is much more stable, approximately 2.4425–2.4445
-- current engineering estimate for MPB band 1 TE-like mode: n_eff ≈ 2.444
-
-Current caveat:
-- The result is now a reasonable engineering estimate, not just a rough candidate.
-- It is still not a final benchmark-validated value because we have not compared against an independent trusted mode solver or reference data.
-- Remaining numerical spread across padding is about ~0.08%.
-
-Added first ring compact-model utility:
-- estimates round-trip length
-- estimates FSR from group index
-- generates simple all-pass through-port spectrum
-- saves ring spectrum CSV and plot
-- added tests for FSR trends, transmission bounds, wavelength grid, and invalid coupling/loss values
-
-This connects the waveguide MPB group-index workflow to a ring-level compact model.
-------
-
+---
 
 ## User learning context
 
@@ -71,6 +41,8 @@ Teaching style requested:
 Important habit:
 
 > Quiz the user after completing each major step.
+
+The user prefers going slowly and understanding the code before implementing blindly.
 
 ---
 
@@ -116,6 +88,22 @@ python -c "import sax; print('sax', sax.__version__)"
 pytest
 ```
 
+VS Code note:
+
+If imports like `meep`, `numpy`, `scipy`, or `matplotlib` are grayed out or marked missing, VS Code/Pylance is probably using the wrong interpreter. Select:
+
+```text
+/Users/blow/miniconda3/envs/siphotonics-clean/bin/python
+```
+
+using:
+
+```text
+Cmd + Shift + P -> Python: Select Interpreter
+```
+
+Then reload VS Code.
+
 ---
 
 ## Current repo structure
@@ -148,10 +136,12 @@ siphotonics-framework/
 
     compact_models/
       __init__.py
+      ring.py
 
   tests/
     test_pdk.py
     test_waveguide_mode.py
+    test_ring.py
 
   data/
     sweeps/
@@ -164,7 +154,7 @@ siphotonics-framework/
   notebooks/
 ```
 
-Generated files such as `.gds`, `.csv`, `.png`, `.h5`, etc. are generally ignored by Git unless deliberately released.
+Generated files such as `.gds`, `.csv`, `.png`, `.npz`, `.h5`, etc. are generally ignored by Git unless deliberately released.
 
 ---
 
@@ -183,6 +173,10 @@ THICKNESS_SI_UM = 0.22
 ```
 
 These are simplified constant-index values at 1550 nm.
+
+Important caveat:
+
+> Current wavelength/group-index sweeps keep these material indices fixed unless explicitly changed. Therefore the current group-index estimate captures waveguide dispersion only, not material dispersion.
 
 ---
 
@@ -269,8 +263,8 @@ Physical model:
 Representative values:
 
 ```text
-EIM vertical slab n_eff ≈ 2.8478
-EIM rectangular waveguide n_eff ≈ 2.6292
+EIM vertical slab n_eff ~= 2.8478
+EIM rectangular waveguide n_eff ~= 2.6292
 ```
 
 The file also sweeps width and saves:
@@ -288,7 +282,7 @@ Key teaching point:
 
 ### `src/simulation/waveguide_mode_numeric.py`
 
-Numerical MPB/Meep scaffold and candidate eigenmode estimate.
+Numerical MPB/Meep waveguide mode simulation and diagnostics.
 
 Current capabilities:
 
@@ -297,94 +291,277 @@ Current capabilities:
 - computes MPB candidate `n_eff`
 - suppresses verbose MPB output
 - runs resolution convergence sweep
-- runs padding convergence sweep
+- runs padding/domain convergence sweep
 - runs band diagnostic
-- saves CSV outputs
-- optionally generates convergence plots if plotting functions have been added
+- extracts field profiles
+- saves field arrays to `.npz`
+- plots total `|E|^2`
+- plots `|Ex|^2`, `|Ey|^2`, `|Ez|^2`
+- computes electric-field component fractions
+- runs resolution + polarization sweep
+- runs padding + polarization sweep
+- plots padding field comparison
+- runs wavelength sweep
+- estimates group index from `n_eff(lambda)`
+- saves CSV outputs and plots
 
-Current MPB candidate:
+Coordinate convention used in MPB mode solving:
 
 ```text
-band 1 n_eff ≈ 2.4355
+x = propagation direction
+y = horizontal waveguide-width direction
+z = vertical thickness direction
 ```
 
-Current interpretation:
-
-> MPB gives a plausible candidate effective index around 2.44, but this is not yet a fully validated TE0 result.
-
-Why not fully validated yet:
-
-- resolution convergence is not clean
-- padding convergence is not clean
-- mode identity is not fully confirmed
-- field profile has not been inspected
-- TE-like polarization has not been verified
-
-Current resolution sweep:
+For this convention:
 
 ```text
-20 px/um → 2.426751
-30 px/um → 2.434596
-40 px/um → 2.435537
-50 px/um → 2.444373
+TE-like mode -> dominant Ey component
+TM-like mode -> dominant Ez component
 ```
 
-Current padding sweep:
+---
+
+## Waveguide mode validation status
+
+Device under study:
 
 ```text
-1.0 um → 2.443246
-1.5 um → 2.435537
-2.0 um → 2.435154
-2.5 um → 2.442268
+500 nm x 220 nm SOI strip waveguide in oxide at 1550 nm
 ```
 
-Current band diagnostic:
+### EIM reference
 
 ```text
-band 1 → 2.435537, ok
-band 2 → 1.762858, ok
-band 3 → 1.489270, ok
-band 4 → no root found
+EIM vertical slab n_eff ~= 2.8478
+EIM rectangular waveguide n_eff ~= 2.6292
+```
+
+EIM is used as a sanity estimate, not the final result.
+
+### MPB band diagnostic
+
+Earlier diagnostic at 1550 nm:
+
+```text
+band 1 -> n_eff ~= 2.4355, ok
+band 2 -> n_eff ~= 1.7629, ok
+band 3 -> n_eff ~= 1.4893, ok
+band 4 -> no root found
 ```
 
 Interpretation:
 
-- band 1 is most likely the strongest core-guided mode
-- band 2 is a weaker candidate
-- band 3 is suspicious because it is close to the oxide index
+- band 1 is the strongest core-guided candidate
+- band 2 is weaker
+- band 3 is close to oxide index and suspicious as a useful guided mode
 - band 4 did not have a root within the current search method
 
-Important concepts already discussed:
+### Field diagnostics
 
-- `resolution` = mesh points per micron
-- `padding` = physical cladding region around the waveguide
-- convergence means result stabilizes as numerical settings improve
-- MPB bands are eigenmode branches, not automatically “the mode we want”
-- “ok” in the band diagnostic means a root was found, not necessarily that it is the correct physical mode
-- field profile inspection is required to verify mode identity
-- staircasing = grid approximation of material boundaries
+Completed MPB band 1 field diagnostics:
+
+- saved total `|E|^2` field plot
+- saved `Ex`, `Ey`, `Ez` component plot
+- computed component energy fractions
+- `Ey` dominates, supporting TE-like classification
+- field is centered on the silicon core and decays into oxide
+- band 1 is a plausible TE-like core-guided mode candidate
+
+### Resolution + polarization sweep
+
+Completed resolution + polarization sweep for MPB band 1:
+
+```text
+resolution   n_eff      Ey fraction   classification
+30 px/um     2.434596   ~0.752        TE-like
+40 px/um     2.435537   ~0.752        TE-like
+50 px/um     2.444373   ~0.752        TE-like
+60 px/um     2.442511   ~0.752        TE-like
+70 px/um     2.442548   ~0.752        TE-like
+80 px/um     2.443276   ~0.752        TE-like
+```
+
+Interpretation:
+
+- `Ey` remains dominant across resolution
+- classification remains TE-like across resolution
+- higher-resolution values cluster around approximately 2.443
+- this improves confidence that band 1 is consistently the same TE-like mode across resolution
+
+### Padding/domain diagnostics
+
+Updated numerical diagnostics to use 70 px/um as the base resolution.
+
+Padding field comparison at 70 px/um shows:
+
+- field remains core-confined
+- field remains centered on the silicon core
+- no obvious boundary/domain-localized mode shape appears
+- padding 1.5-3.0 um gives much more stable `n_eff`
+
+Representative result at 70 px/um:
+
+```text
+padding 1.5 um -> n_eff ~= 2.4425
+padding 2.0 um -> n_eff ~= 2.4425
+padding 2.5 um -> n_eff ~= 2.4444
+padding 3.0 um -> n_eff ~= 2.4445
+```
+
+Current engineering estimate:
+
+```text
+MPB band 1 TE-like mode: n_eff ~= 2.444
+```
+
+Current caveat:
+
+- This is now a reasonable engineering estimate, not just a rough candidate.
+- It is still not a final benchmark-validated value because it has not been compared against an independent trusted mode solver or reference data.
+- Remaining numerical spread across padding is about 0.08%.
+
+---
+
+## Wavelength sweep and group index
+
+Added wavelength sweep for the MPB band 1 TE-like mode.
+
+Purpose:
+
+- compute `n_eff(lambda)` around 1550 nm
+- estimate `dn_eff/dlambda`
+- estimate group index using:
+
+```text
+n_g = n_eff - lambda dn_eff/dlambda
+```
+
+Important caveat:
+
+- material indices are currently fixed at their 1550 nm values
+- therefore the current group-index estimate includes waveguide dispersion only
+- material dispersion from `n_Si(lambda)` and `n_SiO2(lambda)` has not been added yet
+
+Teaching point covered:
+
+```text
+n_eff -> phase at a wavelength
+n_g   -> phase slope, delay, FSR, resonance spacing
+```
+
+The user understands that if `dn_eff/dlambda` is negative, then `n_g > n_eff`.
+
+This group-index result is good enough for a first compact-model connection, but should not yet be treated as a fully material-dispersive group index.
+
+---
+
+## `src/compact_models/ring.py`
+
+Added first ring compact-model utility.
+
+Current capabilities:
+
+- defines `RingResonatorSpec`
+- estimates ring round-trip length
+- estimates FSR from group index
+- generates simple all-pass through-port spectrum
+- saves ring spectrum CSV and plot
+- extracts ring resonance metrics:
+  - resonance wavelength
+  - mean FSR from adjacent dips
+  - extinction ratio
+  - linewidth
+  - loaded Q
+
+Compact-model chain now demonstrated:
+
+```text
+MPB waveguide mode
+    ↓
+n_eff(lambda)
+    ↓
+group index
+    ↓
+ring FSR
+    ↓
+all-pass ring spectrum
+    ↓
+resonance metrics
+```
+
+Current ring model includes:
+
+- ring radius
+- group index
+- bus-to-ring power coupling
+- round-trip power loss
+- through-port all-pass transmission
+
+Current ring model does not yet include:
+
+- drop port
+- wavelength-dependent coupling
+- bend loss versus radius
+- backscattering or resonance splitting
+- thermal tuning
+- nonlinear effects
+- fabrication variation
+- separate intrinsic Q, coupling Q, and loaded Q decomposition
+
+Important concepts covered:
+
+- larger radius decreases FSR
+- larger group index decreases FSR
+- `n_eff` controls resonance locations
+- `n_g` controls resonance spacing
+- all-pass through-port dips are caused by destructive interference at resonance
+- extinction ratio measures through-port dip contrast
+- linewidth measures resonance width
+- smaller linewidth means larger loaded Q
+- loaded Q is affected by coupling, loss, ring radius, and group index
 
 ---
 
 ## Tests
 
-Current tests:
+Current tests include:
 
 ```text
 tests/test_pdk.py
 tests/test_waveguide_mode.py
+tests/test_ring.py
 ```
 
 They check:
 
+### PDK tests
+
 - silicon index > oxide index
 - oxide index > 1
-- SOI thickness is 0.22 µm
+- SOI thickness is 0.22 um
 - WG layer is `(1, 0)`
 - `StripWaveguideSpec` defaults are correct
+
+### Waveguide mode tests
+
 - EIM `n_eff` lies between cladding and core index
 - EIM `n_eff` increases with waveguide width
 - invalid core/cladding ordering raises `ValueError`
+
+### Ring tests
+
+- ring round-trip length is positive
+- FSR is positive
+- larger radius reduces FSR
+- larger group index reduces FSR
+- wavelength grid has expected length
+- all-pass through transmission stays bounded between 0 and 1
+- spectrum varies with wavelength
+- invalid coupling values raise errors
+- invalid loss values raise errors
+- resonance metric extraction finds resonances
+- extracted extinction ratio, FSR, linewidth, and loaded Q are positive
 
 Run:
 
@@ -392,7 +569,7 @@ Run:
 pytest
 ```
 
-The tests are guardrails. They do not prove the full numerical simulation is correct.
+The tests are guardrails. They do not prove the full numerical simulation is correct, but they protect important assumptions and trends.
 
 ---
 
@@ -402,19 +579,31 @@ The tests are guardrails. They do not prove the full numerical simulation is cor
 cd /Users/blow/siphotonics-framework
 conda activate siphotonics-clean
 
+pytest
 python -m src.devices.straight
 python -m src.simulation.waveguide_mode
 python -m src.simulation.waveguide_mode_numeric
-pytest
+python -m src.compact_models.ring
 git status
 ```
 
-Inspect generated numerical outputs:
+Useful output files to inspect:
 
 ```bash
-cat data/sweeps/waveguide_mpb_resolution_sweep.csv
-cat data/sweeps/waveguide_mpb_padding_sweep.csv
-cat data/sweeps/waveguide_mpb_band_diagnostic.csv
+cat data/sweeps/waveguide_mpb_resolution_polarization_sweep.csv
+cat data/sweeps/waveguide_mpb_padding_polarization_sweep.csv
+cat data/sweeps/waveguide_mpb_wavelength_sweep.csv
+cat data/sweeps/ring_all_pass_metrics.csv
+```
+
+Useful plots:
+
+```bash
+open results/figures/waveguide_mpb_band1_field.png
+open results/figures/waveguide_mpb_band1_components.png
+open results/figures/waveguide_mpb_padding_field_comparison.png
+open results/figures/waveguide_mpb_wavelength_sweep.png
+open results/figures/ring_all_pass_spectrum.png
 ```
 
 ---
@@ -430,85 +619,139 @@ layout generation
   ↓
 analytic EIM estimate
   ↓
-numerical MPB candidate solve
+numerical MPB mode solve
   ↓
-resolution / padding / band diagnostics
+mode validation diagnostics
   ↓
-CSV / plot outputs
+wavelength sweep and group-index estimate
+  ↓
+ring FSR compact model
+  ↓
+all-pass ring spectrum
+  ↓
+ring resonance metrics
   ↓
 tests
   ↓
 Git commits
 ```
 
-The current numerical result should be phrased carefully:
+Current best waveguide statement:
 
-> MPB gives a plausible candidate n_eff around 2.44 for the strongest guided mode.
+> MPB band 1 is a plausible TE-like, core-guided mode with engineering-estimate n_eff ~= 2.444 for the 500 nm x 220 nm SOI strip waveguide in oxide at 1550 nm.
 
-Do not yet say:
+Current best compact-model statement:
 
-> The validated TE0 n_eff is 2.44.
+> The framework now uses the waveguide group-index workflow to estimate ring FSR, generate an all-pass ring spectrum, and extract resonance-level metrics including FSR, extinction ratio, linewidth, and loaded Q.
 
 ---
 
-## Next technical step
+## Current caveats
 
-The next major step should be:
+1. Waveguide `n_eff` has not been benchmarked against an independent trusted mode solver.
+2. Current group index includes waveguide dispersion only; material dispersion is not implemented.
+3. Ring model is an all-pass model only; no drop port yet.
+4. Ring coupling is wavelength independent.
+5. Ring propagation loss is represented only as round-trip power loss, not yet derived from waveguide loss in dB/cm.
+6. Bend loss is not modeled.
+7. Backscattering, resonance splitting, thermal tuning, nonlinear effects, and fabrication variation are not modeled.
+8. Field confinement fraction in silicon has not yet been quantified, only visually inspected.
+9. S-parameter extraction has not yet started.
 
-> Add field-profile diagnostics for the MPB candidate modes.
+---
+
+## Current learning checkpoint
+
+The user has worked through:
+
+1. layout versus simulation separation
+2. shared design specs
+3. EIM effective-index approximation
+4. MPB numerical mode solving
+5. resolution convergence
+6. padding/domain convergence
+7. band diagnostics
+8. field-profile inspection
+9. polarization/component diagnostics
+10. wavelength sweep and group-index estimate
+11. ring FSR estimate
+12. all-pass ring spectrum generation
+13. ring resonance metric extraction
+
+Important conceptual corrections already covered:
+
+- padding is physical cladding-domain size, not mesh resolution
+- resolution is pixels per micron
+- `n_eff` controls phase at a wavelength
+- `n_g` controls phase slope, delay, and FSR
+- `n_eff` alone is not enough for ring FSR
+- all-pass ring through-port dips are due to destructive interference at resonance
+- extinction ratio measures through-port dip contrast, not simply "light entering the ring"
+- linewidth measures the width of a resonance
+- loaded Q increases as linewidth decreases
+- current group index is waveguide-only because material dispersion is not implemented yet
+
+---
+
+## Next recommended technical step
+
+Next step after the break:
+
+> Add a coupling-power sweep for the all-pass ring model.
 
 Goal:
 
-Confirm whether band 1 is actually the fundamental TE-like core-confined mode.
+Study how bus-to-ring coupling affects:
 
-Questions to answer:
+- extinction ratio
+- linewidth
+- loaded Q
+- resonance depth
 
-1. Is the field concentrated in the silicon core?
-2. Is the mode TE-like or TM-like?
-3. Is band 1 the fundamental mode?
-4. Does the field shape remain consistent across resolution and padding sweeps?
-5. Are bands 2 and 3 weakly guided, cladding-like, or domain modes?
+Suggested output:
 
-Potential implementation direction:
+```text
+data/sweeps/ring_coupling_sweep.csv
+results/figures/ring_coupling_sweep.png
+```
 
-- Use MPB/Meep field extraction for the selected band.
-- Save field profile arrays to `data/fields/`.
-- Save field plots to `results/figures/`.
-- Plot core outline on top of field intensity.
-- Eventually compute confinement fraction in the silicon core.
+Suggested sweep:
+
+```text
+power_coupling = 0.02, 0.05, 0.10, 0.20, 0.30
+```
+
+Expected learning:
+
+- weak coupling gives narrow but shallow resonances
+- stronger coupling broadens resonances
+- deepest extinction occurs near critical coupling
+- loaded Q depends on both coupling and intrinsic loss
+
+After that, possible next directions:
+
+1. Add intrinsic/coupling/loaded Q decomposition.
+2. Add an add-drop ring model.
+3. Add material dispersion models for Si and SiO2.
+4. Quantify silicon confinement fraction for the waveguide mode.
+5. Begin directional coupler simulation and compact-model extraction.
+6. Begin S-parameter extraction workflow.
 
 ---
 
-## Next teaching checkpoint
-
-Before moving beyond waveguide modes, the user should be able to explain:
-
-1. Difference between layout width and simulation cross section.
-2. Difference between EIM and numerical eigenmode solving.
-3. Meaning of effective index.
-4. Why `n_eff` should lie between cladding and core index for guided dielectric modes.
-5. Difference between resolution and padding.
-6. Why convergence is required.
-7. What MPB bands are.
-8. Why field profile inspection is required for mode identity.
-9. Why the current MPB result is plausible but not fully validated.
-10. How this waveguide mode work will later feed bends, couplers, rings, MZIs, and compact models.
-
----
-
-## Git habits
+## End-of-session Git habit
 
 At the end of each session:
 
 ```bash
 pytest
 git status
-git add AGENT_HANDOFF.md README.md pyproject.toml src tests results/*.md
-git commit -m "Update framework handoff and progress"
+git add AGENT_HANDOFF.md README.md pyproject.toml src tests
+git commit -m "Update framework progress"
 git status
 ```
 
-Generated data and figures are normally ignored unless explicitly released.
+Generated data and figures are normally ignored unless deliberately released.
 
 Update this handoff file every session with:
 
@@ -517,15 +760,3 @@ Update this handoff file every session with:
 - unresolved issues
 - next recommended step
 - quiz topics covered
-
----
-
-## Last known unresolved issues
-
-1. MPB candidate `n_eff` is plausible but not validated.
-2. Resolution convergence has a jump at 50 px/µm.
-3. Padding convergence has a jump at 2.5 µm.
-4. Band identity is only partially diagnosed.
-5. Field profiles have not yet been extracted.
-6. TE-like polarization has not yet been confirmed.
-7. Numerical mode tracking should eventually be based on field identity, not just band number.
