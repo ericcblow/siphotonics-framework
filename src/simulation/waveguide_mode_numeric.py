@@ -51,8 +51,8 @@ class NumericalModeConfig:
         Spatial resolution in pixels per micron.
     """
 
-    padding_um: float = 1.5
-    resolution_px_per_um: int = 40
+    padding_um: float = 2.0
+    resolution_px_per_um: int = 70
 
 
 @dataclass(frozen=True)
@@ -540,6 +540,159 @@ def sweep_resolution_with_polarization_mpb(
 
     return results
 
+def sweep_wavelength_mpb(
+    base_problem: NumericalWaveguideProblem,
+    wavelengths_um: list[float],
+    band_num: int = 1,
+) -> list[dict[str, float | str]]:
+    """Sweep wavelength and estimate numerical n_eff.
+
+    This uses the same geometry, padding, and resolution while changing the
+    target wavelength in the shared StripWaveguideSpec.
+
+    Note:
+        This currently keeps material indices fixed at their 1550 nm values.
+        So this captures waveguide dispersion but not material dispersion.
+    """
+    results = []
+
+    for wavelength_um in wavelengths_um:
+        spec = StripWaveguideSpec(
+            width_um=base_problem.spec.width_um,
+            thickness_um=base_problem.spec.thickness_um,
+            wavelength_um=wavelength_um,
+        )
+
+        problem = NumericalWaveguideProblem(
+            spec=spec,
+            config=base_problem.config,
+            n_core=base_problem.n_core,
+            n_clad=base_problem.n_clad,
+        )
+
+        try:
+            kx, neff = solve_mpb_waveguide_k_and_neff(
+                problem=problem,
+                band_num=band_num,
+            )
+
+            results.append(
+                {
+                    "wavelength_um": float(wavelength_um),
+                    "kx": float(kx),
+                    "numerical_neff": float(neff),
+                    "status": "ok",
+                }
+            )
+
+        except ValueError as error:
+            results.append(
+                {
+                    "wavelength_um": float(wavelength_um),
+                    "kx": float("nan"),
+                    "numerical_neff": float("nan"),
+                    "status": f"failed: {error}",
+                }
+            )
+
+    return results
+
+def estimate_group_index_from_wavelength_sweep(
+    wavelength_results: list[dict[str, float | str]],
+    target_wavelength_um: float,
+) -> dict[str, float]:
+    """Estimate group index from n_eff versus wavelength.
+
+    Uses a quadratic fit around the target wavelength:
+
+        n_eff(lambda) ≈ a lambda^2 + b lambda + c
+
+    Then:
+
+        n_g = n_eff - lambda * dn_eff/dlambda
+    """
+    successful_results = [
+        row for row in wavelength_results
+        if row["status"] == "ok"
+    ]
+
+    if len(successful_results) < 3:
+        raise ValueError("At least 3 successful wavelength points are required.")
+
+    wavelengths = np.array(
+        [float(row["wavelength_um"]) for row in successful_results]
+    )
+    neffs = np.array(
+        [float(row["numerical_neff"]) for row in successful_results]
+    )
+
+    fit_order = min(2, len(successful_results) - 1)
+    coefficients = np.polyfit(wavelengths, neffs, deg=fit_order)
+    polynomial = np.poly1d(coefficients)
+    derivative = np.polyder(polynomial)
+
+    neff_target = float(polynomial(target_wavelength_um))
+    dneff_dlambda = float(derivative(target_wavelength_um))
+
+    group_index = neff_target - target_wavelength_um * dneff_dlambda
+
+    return {
+        "target_wavelength_um": float(target_wavelength_um),
+        "neff_fit": neff_target,
+        "dneff_dlambda": dneff_dlambda,
+        "group_index": float(group_index),
+        "fit_order": float(fit_order),
+        "num_points": float(len(successful_results)),
+    }
+
+def sweep_padding_with_polarization_mpb(
+    base_problem: NumericalWaveguideProblem,
+    paddings_um: list[float],
+    band_num: int = 1,
+) -> list[dict[str, float | str]]:
+    """Sweep padding and record n_eff plus polarization fractions.
+
+    This checks whether the selected band remains the same TE-like physical
+    mode as the simulation-domain padding changes.
+    """
+    results = []
+
+    for padding_um in paddings_um:
+        config = NumericalModeConfig(
+            padding_um=padding_um,
+            resolution_px_per_um=base_problem.config.resolution_px_per_um,
+        )
+
+        problem = NumericalWaveguideProblem(
+            spec=base_problem.spec,
+            config=config,
+            n_core=base_problem.n_core,
+            n_clad=base_problem.n_clad,
+        )
+
+        field_data = extract_band_field_intensity(
+            problem=problem,
+            band_num=band_num,
+        )
+
+        polarization = compute_field_component_fractions(field_data)
+
+        results.append(
+            {
+                "padding_um": float(padding_um),
+                "numerical_neff": float(field_data["neff"]),
+                "ex_fraction": float(polarization["ex_fraction"]),
+                "ey_fraction": float(polarization["ey_fraction"]),
+                "ez_fraction": float(polarization["ez_fraction"]),
+                "dominant_component": str(polarization["dominant_component"]),
+                "classification": str(polarization["classification"]),
+                "cell_width_um": problem.cell_width_um,
+                "cell_height_um": problem.cell_height_um,
+            }
+        )
+
+    return results
+
 def plot_field_intensity(
     field_data: dict[str, np.ndarray | float],
     problem: NumericalWaveguideProblem,
@@ -594,6 +747,32 @@ def plot_field_intensity(
     plt.xlabel("Horizontal coordinate y (um)")
     plt.ylabel("Vertical coordinate z (um)")
     plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+def plot_wavelength_sweep(
+    results: list[dict[str, float | str]],
+    output_path: str | Path,
+) -> None:
+    """Plot numerical n_eff versus wavelength."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    successful_results = [
+        row for row in results
+        if row["status"] == "ok"
+    ]
+
+    wavelengths = [row["wavelength_um"] for row in successful_results]
+    neffs = [row["numerical_neff"] for row in successful_results]
+
+    plt.figure()
+    plt.plot(wavelengths, neffs, marker="o")
+    plt.xlabel("Wavelength (um)")
+    plt.ylabel("Numerical n_eff")
+    plt.title("MPB wavelength sweep")
+    plt.grid(True)
     plt.tight_layout()
     plt.savefig(output_path, dpi=200)
     plt.close()
@@ -665,8 +844,114 @@ def plot_field_components(
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
 
+def plot_padding_field_comparison(
+    base_problem: NumericalWaveguideProblem,
+    paddings_um: list[float],
+    output_path: str | Path,
+    band_num: int = 1,
+) -> None:
+    """Plot |E|^2 field profiles for several padding values.
+
+    This checks whether the spatial mode profile changes as the simulation
+    domain grows. It is a field-shape diagnostic for padding/domain convergence.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    field_cases = []
+
+    for padding_um in paddings_um:
+        config = NumericalModeConfig(
+            padding_um=padding_um,
+            resolution_px_per_um=base_problem.config.resolution_px_per_um,
+        )
+
+        problem = NumericalWaveguideProblem(
+            spec=base_problem.spec,
+            config=config,
+            n_core=base_problem.n_core,
+            n_clad=base_problem.n_clad,
+        )
+
+        field_data = extract_band_field_intensity(
+            problem=problem,
+            band_num=band_num,
+        )
+
+        field_cases.append((padding_um, problem, field_data))
+
+    # Use a common color scale so visual comparisons are meaningful.
+    max_intensity = max(
+        float(np.max(field_data["intensity"]))
+        for _, _, field_data in field_cases
+    )
+
+    fig, axes = plt.subplots(
+        1,
+        len(field_cases),
+        figsize=(4 * len(field_cases), 3.5),
+        constrained_layout=True,
+    )
+
+    if len(field_cases) == 1:
+        axes = [axes]
+
+    for ax, (padding_um, problem, field_data) in zip(axes, field_cases):
+        y_um = field_data["y_um"]
+        z_um = field_data["z_um"]
+        intensity = field_data["intensity"]
+
+        extent = [
+            float(y_um[0]),
+            float(y_um[-1]),
+            float(z_um[0]),
+            float(z_um[-1]),
+        ]
+
+        image = ax.imshow(
+            intensity.T,
+            origin="lower",
+            extent=extent,
+            aspect="auto",
+            vmin=0,
+            vmax=max_intensity,
+        )
+
+        # Silicon core outline.
+        half_width = problem.spec.width_um / 2
+        half_thickness = problem.spec.thickness_um / 2
+
+        y_outline = [
+            -half_width,
+            half_width,
+            half_width,
+            -half_width,
+            -half_width,
+        ]
+        z_outline = [
+            -half_thickness,
+            -half_thickness,
+            half_thickness,
+            half_thickness,
+            -half_thickness,
+        ]
+
+        ax.plot(y_outline, z_outline, "w--", linewidth=1.2)
+
+        ax.set_title(
+            f"padding={padding_um:.1f} um\n"
+            f"n_eff={field_data['neff']:.4f}"
+        )
+        ax.set_xlabel("y (um)")
+        ax.set_ylabel("z (um)")
+
+    fig.colorbar(image, ax=axes, label="|E|^2, common scale")
+    fig.suptitle("MPB band 1 field profile versus padding")
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
 def save_numeric_sweep_csv(
-    results: list[dict[str, float]],
+    results: list[dict[str, float | str]],
     output_path: str | Path,
 ) -> None:
     """Save numerical convergence sweep results to CSV."""
@@ -754,7 +1039,7 @@ def plot_band_diagnostic(
 def main() -> None:
     """Build and summarize the numerical mode problem."""
     spec = StripWaveguideSpec(width_um=0.5)
-    config = NumericalModeConfig(padding_um=1.5, resolution_px_per_um=40)
+    config = NumericalModeConfig(padding_um=1.5, resolution_px_per_um=70)
     problem = NumericalWaveguideProblem(spec=spec, config=config)
 
     print_problem_summary(problem)
@@ -934,10 +1219,97 @@ def main() -> None:
     print(f"Saved padding sweep plot to: {padding_plot}")
     
     print()
-    print("Status")
-    print("------")
-    print("Numerical problem scaffold created successfully.")
-    print("Next step: add plots and reduce MPB verbosity.")
+    print("Wavelength sweep")
+    print("----------------")
+
+    wavelength_results = sweep_wavelength_mpb(
+        base_problem=problem,
+        wavelengths_um=[1.50, 1.525, 1.55, 1.575, 1.60],
+        band_num=1,
+    )
+
+    print("wavelength_um, numerical_n_eff, status")
+    for row in wavelength_results:
+        print(
+            f"{row['wavelength_um']:.3f}, "
+            f"{row['numerical_neff']:.6f}, "
+            f"{row['status']}"
+        )
+
+    wavelength_csv = Path("data/sweeps/waveguide_mpb_wavelength_sweep.csv")
+    save_numeric_sweep_csv(wavelength_results, wavelength_csv)
+    print(f"Saved wavelength sweep to: {wavelength_csv}")
+
+    wavelength_plot = Path("results/figures/waveguide_mpb_wavelength_sweep.png")
+    plot_wavelength_sweep(wavelength_results, wavelength_plot)
+    print(f"Saved wavelength sweep plot to: {wavelength_plot}")
+
+    group_index_result = estimate_group_index_from_wavelength_sweep(
+        wavelength_results=wavelength_results,
+        target_wavelength_um=problem.spec.wavelength_um,
+    )
+
+    print()
+    print("Group index estimate")
+    print("--------------------")
+    print(f"target wavelength: {group_index_result['target_wavelength_um']:.4f} um")
+    print(f"n_eff from fit:    {group_index_result['neff_fit']:.6f}")
+    print(f"dn_eff/dlambda:    {group_index_result['dneff_dlambda']:.6f} 1/um")
+    print(f"group index:       {group_index_result['group_index']:.6f}")
+
+    group_index_csv = Path("data/sweeps/waveguide_mpb_group_index.csv")
+    save_numeric_sweep_csv([group_index_result], group_index_csv)
+    print(f"Saved group index estimate to: {group_index_csv}")
+
+    print()
+    print("Padding + polarization sweep")
+    print("----------------------------")
+
+    padding_polarization_results = sweep_padding_with_polarization_mpb(
+        base_problem=problem,
+        paddings_um=[1.0, 1.5, 2.0, 2.5, 3.0],
+        band_num=1,
+    )
+
+    print(
+        "padding_um, numerical_n_eff, "
+        "ex_fraction, ey_fraction, ez_fraction, classification"
+    )
+    for row in padding_polarization_results:
+        print(
+            f"{row['padding_um']:.1f}, "
+            f"{row['numerical_neff']:.6f}, "
+            f"{row['ex_fraction']:.4f}, "
+            f"{row['ey_fraction']:.4f}, "
+            f"{row['ez_fraction']:.4f}, "
+            f"{row['classification']}"
+        )
+
+    padding_polarization_csv = Path(
+        "data/sweeps/waveguide_mpb_padding_polarization_sweep.csv"
+    )
+    save_numeric_sweep_csv(
+        padding_polarization_results,
+        padding_polarization_csv,
+    )
+    print(
+        "Saved padding + polarization sweep to: "
+        f"{padding_polarization_csv}"
+    )
+
+    padding_field_comparison_plot = Path(
+        "results/figures/waveguide_mpb_padding_field_comparison.png"
+    )
+    plot_padding_field_comparison(
+        base_problem=problem,
+        paddings_um=[1.5, 2.0, 2.5, 3.0],
+        output_path=padding_field_comparison_plot,
+        band_num=1,
+    )
+    print(
+        "Saved padding field comparison plot to: "
+        f"{padding_field_comparison_plot}"
+    )
 
 
 if __name__ == "__main__":
