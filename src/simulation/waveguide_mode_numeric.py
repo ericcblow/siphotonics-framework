@@ -20,13 +20,15 @@ Units:
 from dataclasses import dataclass
 from pathlib import Path
 import csv
-
-import meep as mp
-from meep import mpb
-from scipy.optimize import brentq
 import contextlib
 import os
+
 import matplotlib.pyplot as plt
+import meep as mp
+from meep import mpb
+import numpy as np
+from scipy.optimize import brentq
+
 
 from src.pdk.materials import SI_N_1550, SIO2_N_1550
 from src.pdk.specs import StripWaveguideSpec
@@ -140,35 +142,18 @@ def run_mpb_quietly(mode_solver: mpb.ModeSolver) -> None:
         with contextlib.redirect_stdout(devnull):
             mode_solver.run()
 
-def solve_mpb_waveguide_neff(
+def build_mpb_solver(
     problem: NumericalWaveguideProblem,
-    band_num: int = 1,
-) -> float:
-    """Estimate waveguide n_eff using MPB by solving for beta at target frequency.
-
-    MPB normally solves for frequency at a given propagation constant k.
-    But for photonic design, we usually know the wavelength/frequency and want
-    the propagation constant beta, or equivalently n_eff.
-
-    So we:
-        1. Pick a trial k.
-        2. Ask MPB for the mode frequency.
-        3. Root-find k such that MPB frequency = target frequency.
-        4. Convert k to n_eff using n_eff = k / f.
-
-    Notes
-    -----
-    Units:
-        length unit = microns
-        target frequency = 1 / wavelength_um
+    kx: float,
+    num_bands: int = 4,
+) -> mpb.ModeSolver:
+    """Build an MPB mode solver for a given propagation wavevector kx.
 
     Coordinate convention:
         x: propagation direction
         y: waveguide width direction
         z: waveguide thickness direction
     """
-    target_freq = 1 / problem.spec.wavelength_um
-
     core = mp.Medium(index=problem.n_core)
     clad = mp.Medium(index=problem.n_clad)
 
@@ -192,15 +177,32 @@ def solve_mpb_waveguide_neff(
         )
     ]
 
+    return mpb.ModeSolver(
+        geometry_lattice=geometry_lattice,
+        geometry=geometry,
+        default_material=clad,
+        resolution=problem.config.resolution_px_per_um,
+        num_bands=num_bands,
+        k_points=[mp.Vector3(kx, 0, 0)],
+    )
+
+def solve_mpb_waveguide_k_and_neff(
+    problem: NumericalWaveguideProblem,
+    band_num: int = 1,
+) -> tuple[float, float]:
+    """Solve for propagation wavevector kx and n_eff at target wavelength.
+
+    MPB solves frequency for a given k. We root-find kx such that the selected
+    band frequency equals the target frequency.
+    """
+    target_freq = 1 / problem.spec.wavelength_um
+
     def mode_frequency_for_k(kx: float) -> float:
         """Return MPB frequency of the selected band for a trial kx."""
-        mode_solver = mpb.ModeSolver(
-            geometry_lattice=geometry_lattice,
-            geometry=geometry,
-            default_material=clad,
-            resolution=problem.config.resolution_px_per_um,
+        mode_solver = build_mpb_solver(
+            problem=problem,
+            kx=kx,
             num_bands=max(4, band_num),
-            k_points=[mp.Vector3(kx, 0, 0)],
         )
 
         run_mpb_quietly(mode_solver)
@@ -216,7 +218,18 @@ def solve_mpb_waveguide_neff(
     k_solution = brentq(residual, k_min, k_max, xtol=1e-5, rtol=1e-5)
     numerical_neff = k_solution / target_freq
 
-    return float(numerical_neff)
+    return float(k_solution), float(numerical_neff)
+
+def solve_mpb_waveguide_neff(
+    problem: NumericalWaveguideProblem,
+    band_num: int = 1,
+) -> float:
+    """Estimate waveguide n_eff using MPB by solving for beta at target frequency."""
+    _, numerical_neff = solve_mpb_waveguide_k_and_neff(
+        problem=problem,
+        band_num=band_num,
+    )
+    return numerical_neff
 
 def sweep_bands_mpb(
     problem: NumericalWaveguideProblem,
@@ -326,6 +339,285 @@ def sweep_padding_mpb(
 
     return results
 
+
+def extract_band_field_intensity(
+    problem: NumericalWaveguideProblem,
+    band_num: int = 1,
+) -> dict[str, np.ndarray | float]:
+    """Extract electric-field intensity for a selected MPB band.
+
+    Returns a dictionary containing:
+        y_um: horizontal transverse coordinates
+        z_um: vertical transverse coordinates
+        intensity: |E|^2 field intensity on the y-z cross section
+        epsilon: dielectric profile
+        kx: solved propagation wavevector
+        neff: effective index
+    """
+    kx, neff = solve_mpb_waveguide_k_and_neff(problem, band_num=band_num)
+
+    mode_solver = build_mpb_solver(
+        problem=problem,
+        kx=kx,
+        num_bands=max(4, band_num),
+    )
+    run_mpb_quietly(mode_solver)
+
+    efield = mode_solver.get_efield(band_num, bloch_phase=False)
+    epsilon = mode_solver.get_epsilon()
+
+    efield = np.asarray(efield)
+    epsilon = np.asarray(epsilon)
+
+    # MPB gives a degenerate first dimension for the propagation direction.
+    # Squeeze removes dimensions of length 1.
+    efield = np.squeeze(efield)
+    epsilon = np.squeeze(epsilon)
+
+    # Handle common MPB array shapes.
+    # For vector fields, the last axis is usually field component:
+    #     efield[..., 0] = Ex
+    #     efield[..., 1] = Ey
+    #     efield[..., 2] = Ez
+    if efield.ndim == 3 and efield.shape[-1] == 3:
+        ex = efield[..., 0]
+        ey = efield[..., 1]
+        ez = efield[..., 2]
+        intensity = (
+            np.abs(ex) ** 2
+            + np.abs(ey) ** 2
+            + np.abs(ez) ** 2
+        )
+    elif efield.ndim == 2:
+        # Fallback for scalar-like field data.
+        ex = efield
+        ey = np.zeros_like(efield)
+        ez = np.zeros_like(efield)
+        intensity = np.abs(efield) ** 2
+    else:
+        raise ValueError(f"Unexpected efield shape after squeeze: {efield.shape}")
+    
+    # After squeezing, expected shape is approximately (Ny, Nz).
+    ny, nz = intensity.shape
+
+    y_um = np.linspace(
+        -problem.cell_width_um / 2,
+        problem.cell_width_um / 2,
+        ny,
+    )
+    z_um = np.linspace(
+        -problem.cell_height_um / 2,
+        problem.cell_height_um / 2,
+        nz,
+    )
+
+    return {
+        "y_um": y_um,
+        "z_um": z_um,
+        "ex": ex,
+        "ey": ey,
+        "ez": ez,
+        "intensity": intensity,
+        "epsilon": epsilon,
+        "kx": kx,
+        "neff": neff,
+    }
+
+def save_field_data_npz(
+    field_data: dict[str, np.ndarray | float],
+    output_path: str | Path,
+) -> None:
+    """Save extracted field data to compressed NumPy format."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        output_path,
+        y_um=field_data["y_um"],
+        z_um=field_data["z_um"],
+        ex=field_data["ex"],
+        ey=field_data["ey"],
+        ez=field_data["ez"],
+        intensity=field_data["intensity"],
+        epsilon=field_data["epsilon"],
+        kx=field_data["kx"],
+        neff=field_data["neff"],
+    )
+
+def compute_field_component_fractions(
+    field_data: dict[str, np.ndarray | float],
+) -> dict[str, float | str]:
+    """Compute electric-field component energy fractions.
+
+    Coordinate convention:
+        Ex: propagation-direction electric field component
+        Ey: horizontal transverse electric field component
+        Ez: vertical transverse electric field component
+
+    For this waveguide convention:
+        TE-like modes are expected to have dominant Ey.
+        TM-like modes are expected to have dominant Ez.
+    """
+    ex = field_data["ex"]
+    ey = field_data["ey"]
+    ez = field_data["ez"]
+
+    ex_energy = float(np.sum(np.abs(ex) ** 2))
+    ey_energy = float(np.sum(np.abs(ey) ** 2))
+    ez_energy = float(np.sum(np.abs(ez) ** 2))
+
+    total_energy = ex_energy + ey_energy + ez_energy
+
+    if total_energy <= 0:
+        raise ValueError("Total field energy must be positive.")
+
+    fractions = {
+        "ex_fraction": ex_energy / total_energy,
+        "ey_fraction": ey_energy / total_energy,
+        "ez_fraction": ez_energy / total_energy,
+    }
+
+    dominant_component = max(
+        fractions,
+        key=lambda component: float(fractions[component]),
+    )
+
+    if dominant_component == "ey_fraction":
+        classification = "TE-like"
+    elif dominant_component == "ez_fraction":
+        classification = "TM-like"
+    else:
+        classification = "hybrid/longitudinal"
+
+    return {
+        **fractions,
+        "dominant_component": dominant_component,
+        "classification": classification,
+    }
+
+def plot_field_intensity(
+    field_data: dict[str, np.ndarray | float],
+    problem: NumericalWaveguideProblem,
+    output_path: str | Path,
+    title: str,
+) -> None:
+    """Plot electric-field intensity with silicon core outline."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    y_um = field_data["y_um"]
+    z_um = field_data["z_um"]
+    intensity = field_data["intensity"]
+
+    extent = [
+        float(y_um[0]),
+        float(y_um[-1]),
+        float(z_um[0]),
+        float(z_um[-1]),
+    ]
+
+    plt.figure()
+    plt.imshow(
+        intensity.T,
+        origin="lower",
+        extent=extent,
+        aspect="auto",
+    )
+    plt.colorbar(label="|E|^2, arbitrary units")
+
+    # Silicon core outline.
+    half_width = problem.spec.width_um / 2
+    half_thickness = problem.spec.thickness_um / 2
+
+    y_outline = [
+        -half_width,
+        half_width,
+        half_width,
+        -half_width,
+        -half_width,
+    ]
+    z_outline = [
+        -half_thickness,
+        -half_thickness,
+        half_thickness,
+        half_thickness,
+        -half_thickness,
+    ]
+
+    plt.plot(y_outline, z_outline, "w--", linewidth=1.5)
+
+    plt.xlabel("Horizontal coordinate y (um)")
+    plt.ylabel("Vertical coordinate z (um)")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+def plot_field_components(
+    field_data: dict[str, np.ndarray | float],
+    problem: NumericalWaveguideProblem,
+    output_path: str | Path,
+    title: str,
+) -> None:
+    """Plot |Ex|^2, |Ey|^2, and |Ez|^2 field components."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    y_um = field_data["y_um"]
+    z_um = field_data["z_um"]
+
+    ex = field_data["ex"]
+    ey = field_data["ey"]
+    ez = field_data["ez"]
+
+    component_data = [
+        ("|Ex|^2", np.abs(ex) ** 2),
+        ("|Ey|^2", np.abs(ey) ** 2),
+        ("|Ez|^2", np.abs(ez) ** 2),
+    ]
+
+    extent = [
+        float(y_um[0]),
+        float(y_um[-1]),
+        float(z_um[0]),
+        float(z_um[-1]),
+    ]
+
+    half_width = problem.spec.width_um / 2
+    half_thickness = problem.spec.thickness_um / 2
+
+    y_outline = [
+        -half_width,
+        half_width,
+        half_width,
+        -half_width,
+        -half_width,
+    ]
+    z_outline = [
+        -half_thickness,
+        -half_thickness,
+        half_thickness,
+        half_thickness,
+        -half_thickness,
+    ]
+
+    fig, axes = plt.subplots(1, 3, figsize=(12, 3.5), constrained_layout=True)
+
+    for ax, (component_name, values) in zip(axes, component_data):
+        image = ax.imshow(
+            values.T,
+            origin="lower",
+            extent=extent,
+            aspect="auto",
+        )
+        ax.plot(y_outline, z_outline, "w--", linewidth=1.2)
+        ax.set_title(component_name)
+        ax.set_xlabel("y (um)")
+        ax.set_ylabel("z (um)")
+        fig.colorbar(image, ax=ax)
+
+    fig.suptitle(title)
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
 
 def save_numeric_sweep_csv(
     results: list[dict[str, float]],
@@ -487,6 +779,51 @@ def main() -> None:
     resolution_plot = Path("results/figures/waveguide_mpb_resolution_sweep.png")
     plot_resolution_sweep(resolution_results, resolution_plot)
     print(f"Saved resolution sweep plot to: {resolution_plot}")
+    
+    print()
+    print("Field profile diagnostic")
+    print("------------------------")
+
+    band1_field = extract_band_field_intensity(problem, band_num=1)
+
+    field_npz = Path("data/fields/waveguide_mpb_band1_field.npz")
+    save_field_data_npz(band1_field, field_npz)
+
+    field_plot = Path("results/figures/waveguide_mpb_band1_field.png")
+    plot_field_intensity(
+        field_data=band1_field,
+        problem=problem,
+        output_path=field_plot,
+        title=f"MPB band 1 |E|^2, n_eff={band1_field['neff']:.4f}",
+    )
+
+    print(f"Saved band 1 field data to: {field_npz}")
+    print(f"Saved band 1 field plot to: {field_plot}")
+
+    components_plot = Path("results/figures/waveguide_mpb_band1_components.png")
+    plot_field_components(
+        field_data=band1_field,
+        problem=problem,
+        output_path=components_plot,
+        title=f"MPB band 1 field components, n_eff={band1_field['neff']:.4f}",
+    )
+
+    print(f"Saved band 1 component plot to: {components_plot}")
+
+    polarization = compute_field_component_fractions(band1_field)
+
+    print()
+    print("Polarization diagnostic for band 1")
+    print("----------------------------------")
+    print(f"Ex fraction:        {polarization['ex_fraction']:.4f}")
+    print(f"Ey fraction:        {polarization['ey_fraction']:.4f}")
+    print(f"Ez fraction:        {polarization['ez_fraction']:.4f}")
+    print(f"Dominant component: {polarization['dominant_component']}")
+    print(f"Classification:     {polarization['classification']}")
+
+    polarization_csv = Path("data/sweeps/waveguide_mpb_band1_polarization.csv")
+    save_numeric_sweep_csv([polarization], polarization_csv)
+    print(f"Saved polarization diagnostic to: {polarization_csv}")
 
     print()
     print("Padding convergence sweep")
