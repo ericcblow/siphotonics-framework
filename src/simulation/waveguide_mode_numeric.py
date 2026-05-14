@@ -494,6 +494,52 @@ def compute_field_component_fractions(
         "classification": classification,
     }
 
+def sweep_resolution_with_polarization_mpb(
+    base_problem: NumericalWaveguideProblem,
+    resolutions_px_per_um: list[int],
+    band_num: int = 1,
+) -> list[dict[str, float | str]]:
+    """Sweep resolution and record n_eff plus polarization fractions.
+
+    This checks whether the selected band remains the same TE-like physical
+    mode as resolution changes.
+    """
+    results = []
+
+    for resolution in resolutions_px_per_um:
+        config = NumericalModeConfig(
+            padding_um=base_problem.config.padding_um,
+            resolution_px_per_um=resolution,
+        )
+
+        problem = NumericalWaveguideProblem(
+            spec=base_problem.spec,
+            config=config,
+            n_core=base_problem.n_core,
+            n_clad=base_problem.n_clad,
+        )
+
+        field_data = extract_band_field_intensity(
+            problem=problem,
+            band_num=band_num,
+        )
+
+        polarization = compute_field_component_fractions(field_data)
+
+        results.append(
+            {
+                "resolution_px_per_um": float(resolution),
+                "numerical_neff": float(field_data["neff"]),
+                "ex_fraction": float(polarization["ex_fraction"]),
+                "ey_fraction": float(polarization["ey_fraction"]),
+                "ez_fraction": float(polarization["ez_fraction"]),
+                "dominant_component": str(polarization["dominant_component"]),
+                "classification": str(polarization["classification"]),
+            }
+        )
+
+    return results
+
 def plot_field_intensity(
     field_data: dict[str, np.ndarray | float],
     problem: NumericalWaveguideProblem,
@@ -780,6 +826,42 @@ def main() -> None:
     plot_resolution_sweep(resolution_results, resolution_plot)
     print(f"Saved resolution sweep plot to: {resolution_plot}")
     
+    print()
+    print("Resolution + polarization sweep")
+    print("-------------------------------")
+
+    resolution_polarization_results = sweep_resolution_with_polarization_mpb(
+        base_problem=problem,
+        resolutions_px_per_um=[30, 40, 50, 60, 70, 80],
+        band_num=1,
+    )
+
+    print(
+        "resolution_px_per_um, numerical_n_eff, "
+        "ex_fraction, ey_fraction, ez_fraction, classification"
+    )
+    for row in resolution_polarization_results:
+        print(
+            f"{row['resolution_px_per_um']:.0f}, "
+            f"{row['numerical_neff']:.6f}, "
+            f"{row['ex_fraction']:.4f}, "
+            f"{row['ey_fraction']:.4f}, "
+            f"{row['ez_fraction']:.4f}, "
+            f"{row['classification']}"
+        )
+
+    resolution_polarization_csv = Path(
+        "data/sweeps/waveguide_mpb_resolution_polarization_sweep.csv"
+    )
+    save_numeric_sweep_csv(
+        resolution_polarization_results,
+        resolution_polarization_csv,
+    )
+    print(
+        "Saved resolution + polarization sweep to: "
+        f"{resolution_polarization_csv}"
+    )
+
     print()
     print("Field profile diagnostic")
     print("------------------------")
