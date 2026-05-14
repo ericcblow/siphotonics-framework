@@ -23,6 +23,11 @@ Added MPB band 1 field diagnostics:
 - Ey dominates, supporting TE-like classification
 - band 1 is now a plausible TE-like core-guided mode candidate
 - still not fully validated because resolution/padding convergence is not clean
+
+Added resolution + polarization sweep for MPB band 1.
+Results from 30–80 px/um show Ey fraction remains ~0.752 and classification remains TE-like.
+Higher-resolution n_eff clusters around ~2.443.
+This improves confidence that band 1 is consistently the TE-like mode across resolution, though padding convergence and full validation remain open.
 ---
 
 ## User learning context
