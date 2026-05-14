@@ -8,6 +8,7 @@ from src.compact_models.ring import (
     all_pass_ring_through_power,
     estimate_ring_fsr_nm,
     estimate_ring_fsr_um,
+    extract_ring_resonance_metrics,
     ring_round_trip_length_um,
     wavelength_grid_around_center,
 )
@@ -137,3 +138,31 @@ def test_invalid_ring_loss_raises_error():
             spec=spec,
             round_trip_power_loss=1.0,
         )
+
+def test_ring_metric_extraction_finds_resonances():
+    spec = RingResonatorSpec(
+        radius_um=10.0,
+        wavelength_um=1.55,
+        group_index=4.0,
+    )
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=1.55,
+        span_nm=40.0,
+        num_points=2001,
+    )
+
+    transmission = all_pass_ring_through_power(
+        wavelengths_um=wavelengths_um,
+        spec=spec,
+        power_coupling=0.1,
+        round_trip_power_loss=0.02,
+    )
+
+    metrics = extract_ring_resonance_metrics(wavelengths_um, transmission)
+
+    assert metrics["num_resonances_found"] >= 2
+    assert metrics["min_transmission"] < metrics["max_transmission"]
+    assert metrics["extinction_ratio_db"] > 0
+    assert metrics["mean_fsr_nm"] > 0
+    assert metrics["linewidth_nm"] > 0
+    assert metrics["loaded_q"] > 0
