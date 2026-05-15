@@ -204,9 +204,12 @@ def extract_ring_resonance_metrics(
     min_transmission = float(transmission[deepest_index])
     max_transmission = float(np.max(transmission))
 
-    # Extinction ratio in dB: 10 log10(T_max / T_min)
-    extinction_ratio_db = float(10 * np.log10(max_transmission / min_transmission))
+    transmission_floor = 1e-15
+    safe_min_transmission = max(min_transmission, transmission_floor)
 
+    extinction_ratio_db = float(
+        10 * np.log10(max_transmission / safe_min_transmission)
+    )
     linewidth_um = estimate_dip_linewidth_um(
         wavelengths_um=wavelengths_um,
         transmission=transmission,
@@ -246,6 +249,50 @@ def extract_ring_resonance_metrics(
         "mean_fsr_um": mean_fsr_um,
         "mean_fsr_nm": mean_fsr_nm,
     }
+
+def sweep_ring_coupling(
+    spec: RingResonatorSpec,
+    power_couplings: list[float],
+    round_trip_power_loss: float = 0.02,
+    span_nm: float = 40.0,
+    num_points: int = 2001,
+) -> list[dict[str, float]]:
+    """Sweep bus-to-ring power coupling and extract ring metrics."""
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=spec.wavelength_um,
+        span_nm=span_nm,
+        num_points=num_points,
+    )
+
+    results = []
+
+    for power_coupling in power_couplings:
+        transmission = all_pass_ring_through_power(
+            wavelengths_um=wavelengths_um,
+            spec=spec,
+            power_coupling=power_coupling,
+            round_trip_power_loss=round_trip_power_loss,
+        )
+
+        metrics = extract_ring_resonance_metrics(
+            wavelengths_um=wavelengths_um,
+            transmission=transmission,
+        )
+
+        results.append(
+            {
+                "power_coupling": float(power_coupling),
+                "round_trip_power_loss": float(round_trip_power_loss),
+                "extinction_ratio_db": float(metrics["extinction_ratio_db"]),
+                "linewidth_nm": float(metrics["linewidth_nm"]),
+                "loaded_q": float(metrics["loaded_q"]),
+                "mean_fsr_nm": float(metrics["mean_fsr_nm"]),
+                "min_transmission": float(metrics["min_transmission"]),
+                "max_transmission": float(metrics["max_transmission"]),
+            }
+        )
+
+    return results
 
 def wavelength_grid_around_center(
     center_wavelength_um: float,
@@ -289,6 +336,25 @@ def save_ring_spectrum_csv(
             )
 
 
+def save_ring_sweep_csv(
+    results: list[dict[str, float]],
+    output_path,
+) -> None:
+    """Save ring sweep results to CSV."""
+    import csv
+    from pathlib import Path
+
+    if not results:
+        raise ValueError("Cannot save empty sweep results.")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("w", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=list(results[0].keys()))
+        writer.writeheader()
+        writer.writerows(results)
+
 def save_ring_metrics_csv(
     metrics: dict[str, float],
     output_path,
@@ -324,6 +390,188 @@ def plot_ring_spectrum(
     plt.ylabel("Through power")
     plt.title("All-pass ring through-port spectrum")
     plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+def plot_ring_coupling_sweep(
+    results: list[dict[str, float]],
+    output_path,
+) -> None:
+    """Plot ring extinction ratio and loaded Q versus power coupling."""
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    couplings = [row["power_coupling"] for row in results]
+    extinction = [row["extinction_ratio_db"] for row in results]
+    loaded_q = [row["loaded_q"] for row in results]
+    linewidth_nm = [row["linewidth_nm"] for row in results]
+
+    fig, ax1 = plt.subplots(figsize=(7, 4.5))
+
+    extinction_color = "tab:blue"
+    q_color = "tab:orange"
+
+    extinction_line = ax1.plot(
+        couplings,
+        extinction,
+        marker="o",
+        color=extinction_color,
+        label="Extinction ratio",
+    )
+    ax1.set_xlabel("Power coupling")
+    ax1.set_ylabel("Extinction ratio (dB)", color=extinction_color)
+    ax1.tick_params(axis="y", labelcolor=extinction_color)
+    ax1.grid(True, alpha=0.35)
+
+    ax2 = ax1.twinx()
+    q_line = ax2.plot(
+        couplings,
+        loaded_q,
+        marker="s",
+        linestyle="--",
+        color=q_color,
+        label="Loaded Q",
+    )
+    ax2.set_ylabel("Loaded Q", color=q_color)
+    ax2.tick_params(axis="y", labelcolor=q_color)
+
+    lines = extinction_line + q_line
+    labels = [line.get_label() for line in lines]
+    ax1.legend(lines, labels, loc="best")
+
+    title = "All-pass ring coupling sweep"
+    subtitle = "Extinction peaks near critical coupling; loaded Q decreases with stronger coupling"
+    plt.title(f"{title}\n{subtitle}", fontsize=11)
+
+    fig.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+def plot_ring_coupling_linewidth_sweep(
+    results: list[dict[str, float]],
+    output_path,
+) -> None:
+    """Plot ring linewidth versus power coupling."""
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    couplings = [row["power_coupling"] for row in results]
+    linewidth_nm = [row["linewidth_nm"] for row in results]
+
+    plt.figure(figsize=(7, 4.5))
+    plt.plot(
+        couplings,
+        linewidth_nm,
+        marker="o",
+        color="tab:green",
+        label="Linewidth",
+    )
+    plt.xlabel("Power coupling")
+    plt.ylabel("Linewidth (nm)")
+    plt.title("All-pass ring linewidth versus coupling")
+    plt.grid(True, alpha=0.35)
+    plt.legend(loc="best")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+def plot_ring_spectra_for_couplings(
+    spec: RingResonatorSpec,
+    power_couplings: list[float],
+    round_trip_power_loss: float,
+    output_path,
+    span_nm: float = 20.0,
+    num_points: int = 2001,
+) -> None:
+    """Plot all-pass ring spectra for several coupling values.
+
+    This visually shows how extinction depth and linewidth change with coupling.
+    """
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=spec.wavelength_um,
+        span_nm=span_nm,
+        num_points=num_points,
+    )
+
+    plt.figure(figsize=(8, 4.8))
+
+    for power_coupling in power_couplings:
+        transmission = all_pass_ring_through_power(
+            wavelengths_um=wavelengths_um,
+            spec=spec,
+            power_coupling=power_coupling,
+            round_trip_power_loss=round_trip_power_loss,
+        )
+
+        metrics = extract_ring_resonance_metrics(
+            wavelengths_um=wavelengths_um,
+            transmission=transmission,
+        )
+
+        label = (
+            f"k²={power_coupling:.3f}, "
+            f"ER={metrics['extinction_ratio_db']:.1f} dB"
+        )
+
+        plt.plot(
+            wavelengths_um * 1000,
+            transmission,
+            label=label,
+        )
+
+    plt.xlabel("Wavelength (nm)")
+    plt.ylabel("Through power")
+    plt.title("All-pass ring spectra versus coupling")
+    plt.grid(True, alpha=0.35)
+    plt.legend(loc="best", fontsize=8)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+def plot_ring_coupling_min_transmission_sweep(
+    results: list[dict[str, float]],
+    output_path,
+) -> None:
+    """Plot minimum through transmission versus power coupling."""
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    couplings = [row["power_coupling"] for row in results]
+    min_transmission = [row["min_transmission"] for row in results]
+
+    plt.figure(figsize=(7, 4.5))
+    plt.plot(
+        couplings,
+        min_transmission,
+        marker="o",
+        color="tab:purple",
+        label="Minimum through power",
+    )
+    plt.xlabel("Power coupling")
+    plt.ylabel("Minimum through power")
+    plt.title("All-pass ring minimum transmission versus coupling")
+    plt.grid(True, alpha=0.35)
+    plt.legend(loc="best")
     plt.tight_layout()
     plt.savefig(output_path, dpi=200)
     plt.close()
@@ -395,4 +643,77 @@ if __name__ == "__main__":
 
     print(f"linewidth:             {metrics['linewidth_nm']:.4f} nm")
     print(f"loaded Q:              {metrics['loaded_q']:.1f}")
+
+    coupling_results = sweep_ring_coupling(
+        spec=spec,
+        power_couplings=[
+            0.002,
+            0.005,
+            0.008,
+            0.010,
+            0.012,
+            0.014,
+            0.016,
+            0.018,
+            0.020,
+            0.022,
+            0.024,
+            0.026,
+            0.028,
+            0.030,
+            0.035,
+            0.040,
+            0.050,
+            0.075,
+            0.100,
+            0.150,
+            0.200,
+            0.300,
+        ],
+        round_trip_power_loss=0.02,
+        span_nm=40.0,
+        num_points=2001,
+    )
+
+    coupling_csv = "data/sweeps/ring_coupling_sweep.csv"
+    save_ring_sweep_csv(coupling_results, coupling_csv)
+
+    coupling_plot = "results/figures/ring_coupling_sweep.png"
+    plot_ring_coupling_sweep(coupling_results, coupling_plot)
+
+    print()
+    print("Ring coupling sweep")
+    print("-------------------")
+    print("power_coupling, extinction_ratio_db, linewidth_nm, loaded_q")
+    for row in coupling_results:
+        print(
+            f"{row['power_coupling']:.3f}, "
+            f"{row['extinction_ratio_db']:.3f}, "
+            f"{row['linewidth_nm']:.4f}, "
+            f"{row['loaded_q']:.1f}"
+        )
+
+    print(f"Saved coupling sweep to: {coupling_csv}")
+    print(f"Saved coupling sweep plot to: {coupling_plot}")
     
+    linewidth_plot = "results/figures/ring_coupling_linewidth_sweep.png"
+    plot_ring_coupling_linewidth_sweep(coupling_results, linewidth_plot)
+
+    spectra_vs_coupling_plot = "results/figures/ring_spectra_vs_coupling.png"
+    plot_ring_spectra_for_couplings(
+        spec=spec,
+        power_couplings=[0.005, 0.010, 0.020, 0.050, 0.100],
+        round_trip_power_loss=0.02,
+        output_path=spectra_vs_coupling_plot,
+        span_nm=20.0,
+        num_points=2001,
+    )
+
+    print(f"Saved spectra versus coupling plot to: {spectra_vs_coupling_plot}")
+
+    min_transmission_plot = "results/figures/ring_coupling_min_transmission_sweep.png"
+    plot_ring_coupling_min_transmission_sweep(
+        coupling_results,
+        min_transmission_plot,
+    )
+    print(f"Saved min-transmission sweep plot to: {min_transmission_plot}")
