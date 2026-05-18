@@ -8,6 +8,7 @@ from src.compact_models.ring import (
     all_pass_ring_through_power,
     estimate_ring_fsr_nm,
     estimate_ring_fsr_um,
+    estimate_ring_q_factors,
     extract_ring_resonance_metrics,
     ring_round_trip_length_um,
     wavelength_grid_around_center,
@@ -166,3 +167,49 @@ def test_ring_metric_extraction_finds_resonances():
     assert metrics["mean_fsr_nm"] > 0
     assert metrics["linewidth_nm"] > 0
     assert metrics["loaded_q"] > 0
+
+
+def test_ring_q_factors_are_positive():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+
+    q_factors = estimate_ring_q_factors(
+        spec=spec,
+        power_coupling=0.1,
+        round_trip_power_loss=0.02,
+    )
+
+    assert q_factors["intrinsic_q"] > 0
+    assert q_factors["coupling_q"] > 0
+    assert q_factors["analytic_loaded_q"] > 0
+
+
+def test_loaded_q_is_less_than_intrinsic_and_coupling_q():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+
+    q_factors = estimate_ring_q_factors(
+        spec=spec,
+        power_coupling=0.1,
+        round_trip_power_loss=0.02,
+    )
+
+    assert q_factors["analytic_loaded_q"] < q_factors["intrinsic_q"]
+    assert q_factors["analytic_loaded_q"] < q_factors["coupling_q"]
+
+
+def test_stronger_coupling_reduces_coupling_q():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+
+    weak = estimate_ring_q_factors(
+        spec=spec,
+        power_coupling=0.02,
+        round_trip_power_loss=0.02,
+    )
+    strong = estimate_ring_q_factors(
+        spec=spec,
+        power_coupling=0.2,
+        round_trip_power_loss=0.02,
+    )
+
+    assert strong["coupling_q"] < weak["coupling_q"]
+    assert strong["analytic_loaded_q"] < weak["analytic_loaded_q"]
+

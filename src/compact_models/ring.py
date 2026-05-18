@@ -47,6 +47,51 @@ def estimate_ring_fsr_um(spec: RingResonatorSpec) -> float:
     return float(fsr_um)
 
 
+def estimate_ring_q_factors(
+    spec: RingResonatorSpec,
+    power_coupling: float,
+    round_trip_power_loss: float,
+) -> dict[str, float]:
+    """Estimate intrinsic, coupling, and loaded Q for a ring.
+
+    Uses small-loss approximations:
+
+        Q_intrinsic ≈ 2π n_g L_rt / (λ * loss)
+        Q_coupling  ≈ 2π n_g L_rt / (λ * coupling)
+        1/Q_loaded  = 1/Q_intrinsic + 1/Q_coupling
+
+    where loss and coupling are power fractions per round trip/pass.
+
+    These estimates are approximate and are most accurate for small loss and
+    small coupling.
+    """
+    if not 0 < power_coupling < 1:
+        raise ValueError("power_coupling must be between 0 and 1.")
+
+    if not 0 < round_trip_power_loss < 1:
+        raise ValueError("round_trip_power_loss must be between 0 and 1.")
+
+    round_trip_length_um = ring_round_trip_length_um(spec)
+
+    q_scale = (
+        2
+        * np.pi
+        * spec.group_index
+        * round_trip_length_um
+        / spec.wavelength_um
+    )
+
+    intrinsic_q = q_scale / round_trip_power_loss
+    coupling_q = q_scale / power_coupling
+
+    loaded_q = 1 / (1 / intrinsic_q + 1 / coupling_q)
+
+    return {
+        "intrinsic_q": float(intrinsic_q),
+        "coupling_q": float(coupling_q),
+        "analytic_loaded_q": float(loaded_q),
+    }
+
 def estimate_ring_fsr_nm(spec: RingResonatorSpec) -> float:
     """Estimate ring free spectral range in nanometers."""
     return 1000 * estimate_ring_fsr_um(spec)
@@ -279,6 +324,12 @@ def sweep_ring_coupling(
             transmission=transmission,
         )
 
+        q_factors = estimate_ring_q_factors(
+            spec=spec,
+            power_coupling=power_coupling,
+            round_trip_power_loss=round_trip_power_loss,
+        )
+
         results.append(
             {
                 "power_coupling": float(power_coupling),
@@ -286,6 +337,10 @@ def sweep_ring_coupling(
                 "extinction_ratio_db": float(metrics["extinction_ratio_db"]),
                 "linewidth_nm": float(metrics["linewidth_nm"]),
                 "loaded_q": float(metrics["loaded_q"]),
+                "intrinsic_q": float(q_factors["intrinsic_q"]),
+                "coupling_q": float(q_factors["coupling_q"]),
+                "analytic_loaded_q": float(q_factors["analytic_loaded_q"]),
+                "spectrum_loaded_q": float(metrics["loaded_q"]),
                 "mean_fsr_nm": float(metrics["mean_fsr_nm"]),
                 "min_transmission": float(metrics["min_transmission"]),
                 "max_transmission": float(metrics["max_transmission"]),
@@ -408,7 +463,7 @@ def plot_ring_coupling_sweep(
 
     couplings = [row["power_coupling"] for row in results]
     extinction = [row["extinction_ratio_db"] for row in results]
-    loaded_q = [row["loaded_q"] for row in results]
+    loaded_q = [row["spectrum_loaded_q"] for row in results]
     linewidth_nm = [row["linewidth_nm"] for row in results]
 
     fig, ax1 = plt.subplots(figsize=(7, 4.5))
@@ -681,24 +736,6 @@ if __name__ == "__main__":
     coupling_plot = "results/figures/ring_coupling_sweep.png"
     plot_ring_coupling_sweep(coupling_results, coupling_plot)
 
-    print()
-    print("Ring coupling sweep")
-    print("-------------------")
-    print("power_coupling, extinction_ratio_db, linewidth_nm, loaded_q")
-    for row in coupling_results:
-        print(
-            f"{row['power_coupling']:.3f}, "
-            f"{row['extinction_ratio_db']:.3f}, "
-            f"{row['linewidth_nm']:.4f}, "
-            f"{row['loaded_q']:.1f}"
-        )
-
-    print(f"Saved coupling sweep to: {coupling_csv}")
-    print(f"Saved coupling sweep plot to: {coupling_plot}")
-    
-    linewidth_plot = "results/figures/ring_coupling_linewidth_sweep.png"
-    plot_ring_coupling_linewidth_sweep(coupling_results, linewidth_plot)
-
     spectra_vs_coupling_plot = "results/figures/ring_spectra_vs_coupling.png"
     plot_ring_spectra_for_couplings(
         spec=spec,
@@ -709,11 +746,30 @@ if __name__ == "__main__":
         num_points=2001,
     )
 
-    print(f"Saved spectra versus coupling plot to: {spectra_vs_coupling_plot}")
-
     min_transmission_plot = "results/figures/ring_coupling_min_transmission_sweep.png"
     plot_ring_coupling_min_transmission_sweep(
         coupling_results,
         min_transmission_plot,
     )
+
+    print()
+    print("Ring coupling sweep")
+    print("-------------------")
+    print(
+        "power_coupling, extinction_ratio_db, linewidth_nm, "
+        "spectrum_loaded_q, analytic_loaded_q, coupling_q"
+    )
+    for row in coupling_results:
+        print(
+            f"{row['power_coupling']:.3f}, "
+            f"{row['extinction_ratio_db']:.3f}, "
+            f"{row['linewidth_nm']:.4f}, "
+            f"{row['spectrum_loaded_q']:.1f}, "
+            f"{row['analytic_loaded_q']:.1f}, "
+            f"{row['coupling_q']:.1f}"
+        )
+
+    print(f"Saved coupling sweep to: {coupling_csv}")
+    print(f"Saved coupling sweep plot to: {coupling_plot}")
+    print(f"Saved spectra versus coupling plot to: {spectra_vs_coupling_plot}")
     print(f"Saved min-transmission sweep plot to: {min_transmission_plot}")

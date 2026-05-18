@@ -473,6 +473,12 @@ Current capabilities:
   - extinction ratio
   - linewidth
   - loaded Q
+- runs coupling-power sweep around critical coupling
+- saves coupling sweep CSV
+- plots extinction ratio and loaded Q versus coupling
+- plots linewidth versus coupling
+- plots minimum through-transmission versus coupling
+- plots representative spectra versus coupling
 
 Compact-model chain now demonstrated:
 
@@ -488,40 +494,8 @@ ring FSR
 all-pass ring spectrum
     ↓
 resonance metrics
-```
-
-Current ring model includes:
-
-- ring radius
-- group index
-- bus-to-ring power coupling
-- round-trip power loss
-- through-port all-pass transmission
-
-Current ring model does not yet include:
-
-- drop port
-- wavelength-dependent coupling
-- bend loss versus radius
-- backscattering or resonance splitting
-- thermal tuning
-- nonlinear effects
-- fabrication variation
-- separate intrinsic Q, coupling Q, and loaded Q decomposition
-
-Important concepts covered:
-
-- larger radius decreases FSR
-- larger group index decreases FSR
-- `n_eff` controls resonance locations
-- `n_g` controls resonance spacing
-- all-pass through-port dips are caused by destructive interference at resonance
-- extinction ratio measures through-port dip contrast
-- linewidth measures resonance width
-- smaller linewidth means larger loaded Q
-- loaded Q is affected by coupling, loss, ring radius, and group index
-
----
+    ↓
+coupling-dependent extinction, linewidth, and loaded Q
 
 ## Tests
 
@@ -697,45 +671,24 @@ Important conceptual corrections already covered:
 
 Next step after the break:
 
-> Add a coupling-power sweep for the all-pass ring model.
+Next step after the break:
+
+> Add intrinsic Q, coupling Q, and loaded Q decomposition for the all-pass ring model.
 
 Goal:
 
-Study how bus-to-ring coupling affects:
+Explain the coupling sweep using cavity lifetime/Q language:
 
-- extinction ratio
-- linewidth
-- loaded Q
-- resonance depth
-
-Suggested output:
-
-```text
-data/sweeps/ring_coupling_sweep.csv
-results/figures/ring_coupling_sweep.png
-```
-
-Suggested sweep:
-
-```text
-power_coupling = 0.02, 0.05, 0.10, 0.20, 0.30
-```
+- intrinsic Q comes from internal round-trip loss
+- coupling Q comes from energy leaving through the bus
+- loaded Q combines both loss channels
+- stronger coupling lowers coupling Q and therefore lowers loaded Q
 
 Expected learning:
 
-- weak coupling gives narrow but shallow resonances
-- stronger coupling broadens resonances
-- deepest extinction occurs near critical coupling
-- loaded Q depends on both coupling and intrinsic loss
-
-After that, possible next directions:
-
-1. Add intrinsic/coupling/loaded Q decomposition.
-2. Add an add-drop ring model.
-3. Add material dispersion models for Si and SiO2.
-4. Quantify silicon confinement fraction for the waveguide mode.
-5. Begin directional coupler simulation and compact-model extraction.
-6. Begin S-parameter extraction workflow.
+- why loaded Q decreases as coupling increases
+- why critical coupling maximizes extinction
+- how intrinsic loss and coupling loss determine ring behavior
 
 ---
 
