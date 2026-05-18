@@ -15,6 +15,7 @@ from src.compact_models.ring import (
     sweep_ring_coupling,
     add_drop_ring_power,
     extract_add_drop_metrics,
+    sweep_add_drop_coupling_balance,
 )
 
 
@@ -304,3 +305,23 @@ def test_add_drop_metric_extraction_finds_drop_peaks():
     assert metrics["drop_insertion_loss_db"] >= 0
     assert metrics["through_extinction_ratio_db"] > 0
     assert metrics["mean_fsr_nm"] > 0
+
+def test_add_drop_coupling_balance_sweep_runs():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+
+    results = sweep_add_drop_coupling_balance(
+        spec=spec,
+        input_power_couplings=[0.02, 0.05],
+        drop_power_couplings=[0.02, 0.05],
+        round_trip_power_loss=0.02,
+        span_nm=40.0,
+        num_points=501,
+    )
+
+    assert len(results) == 4
+
+    for row in results:
+        assert row["max_drop_power"] >= 0
+        assert row["drop_insertion_loss_db"] >= 0
+        assert row["through_extinction_ratio_db"] >= 0
+        assert row["mean_fsr_nm"] > 0

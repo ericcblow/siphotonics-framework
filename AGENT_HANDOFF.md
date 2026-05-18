@@ -552,6 +552,19 @@ Added ring Q decomposition and comparison diagnostics:
 - compares analytic loaded Q to spectrum-extracted loaded Q versus coupling
 - confirms stronger coupling lowers coupling Q and loaded Q
 
+Added add-drop ring compact model:
+- computes through-port and drop-port spectra
+- saves add-drop spectrum CSV and plot
+- added tests for bounded through/drop power and resonant drop peaks
+- demonstrated that through port dips and drop port peaks occur at resonance
+
+Added add-drop ring compact model and metrics:
+- computes through-port and drop-port spectra
+- saves add-drop spectrum CSV and plot
+- extracts drop peak wavelength, max drop power, drop insertion loss, through extinction, and mean FSR
+- added tests for bounded through/drop power, resonant drop peaks, and add-drop metric extraction
+
+
 Run:
 
 ```bash

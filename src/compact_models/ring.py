@@ -298,6 +298,62 @@ def extract_add_drop_metrics(
         "mean_fsr_nm": mean_fsr_nm,
     }
 
+def sweep_add_drop_coupling_balance(
+    spec: RingResonatorSpec,
+    input_power_couplings: list[float],
+    drop_power_couplings: list[float],
+    round_trip_power_loss: float = 0.02,
+    span_nm: float = 40.0,
+    num_points: int = 2001,
+) -> list[dict[str, float]]:
+    """Sweep input/drop coupling values and extract add-drop metrics.
+
+    This explores how coupling balance affects drop efficiency and through-port
+    extinction.
+    """
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=spec.wavelength_um,
+        span_nm=span_nm,
+        num_points=num_points,
+    )
+
+    results = []
+
+    for input_power_coupling in input_power_couplings:
+        for drop_power_coupling in drop_power_couplings:
+            through_power, drop_power = add_drop_ring_power(
+                wavelengths_um=wavelengths_um,
+                spec=spec,
+                input_power_coupling=input_power_coupling,
+                drop_power_coupling=drop_power_coupling,
+                round_trip_power_loss=round_trip_power_loss,
+            )
+
+            metrics = extract_add_drop_metrics(
+                wavelengths_um=wavelengths_um,
+                through_power=through_power,
+                drop_power=drop_power,
+            )
+
+            results.append(
+                {
+                    "input_power_coupling": float(input_power_coupling),
+                    "drop_power_coupling": float(drop_power_coupling),
+                    "round_trip_power_loss": float(round_trip_power_loss),
+                    "max_drop_power": float(metrics["max_drop_power"]),
+                    "drop_insertion_loss_db": float(
+                        metrics["drop_insertion_loss_db"]
+                    ),
+                    "min_through_power": float(metrics["min_through_power"]),
+                    "through_extinction_ratio_db": float(
+                        metrics["through_extinction_ratio_db"]
+                    ),
+                    "mean_fsr_nm": float(metrics["mean_fsr_nm"]),
+                }
+            )
+
+    return results
+
 def estimate_dip_linewidth_um(
     wavelengths_um: np.ndarray,
     transmission: np.ndarray,
@@ -886,6 +942,58 @@ def plot_add_drop_spectrum(
     plt.savefig(output_path, dpi=200)
     plt.close()
 
+def plot_add_drop_coupling_heatmap(
+    results: list[dict[str, float]],
+    metric_name: str,
+    output_path,
+    title: str,
+    colorbar_label: str,
+) -> None:
+    """Plot a heatmap for an add-drop coupling-balance metric."""
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    input_values = sorted(
+        {row["input_power_coupling"] for row in results}
+    )
+    drop_values = sorted(
+        {row["drop_power_coupling"] for row in results}
+    )
+
+    metric_grid = np.empty((len(drop_values), len(input_values)))
+
+    for row in results:
+        x_index = input_values.index(row["input_power_coupling"])
+        y_index = drop_values.index(row["drop_power_coupling"])
+        metric_grid[y_index, x_index] = row[metric_name]
+
+    extent = [
+        min(input_values),
+        max(input_values),
+        min(drop_values),
+        max(drop_values),
+    ]
+
+    plt.figure(figsize=(6.5, 5.2))
+    image = plt.imshow(
+        metric_grid,
+        origin="lower",
+        extent=extent,
+        aspect="auto",
+    )
+    plt.colorbar(image, label=colorbar_label)
+    plt.xlabel("Input power coupling κ1²")
+    plt.ylabel("Drop power coupling κ2²")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
 if __name__ == "__main__":
     spec = RingResonatorSpec(
         radius_um=8.0,
@@ -995,11 +1103,48 @@ if __name__ == "__main__":
     )
     print(f"mean FSR:               {add_drop_metrics['mean_fsr_nm']:.3f} nm")
     print(f"Saved add-drop metrics to: {add_drop_metrics_csv}")
-    
+
     metrics = extract_ring_resonance_metrics(
         wavelengths_um=wavelengths_um,
         transmission=transmission,
     )
+    
+    add_drop_coupling_results = sweep_add_drop_coupling_balance(
+        spec=spec,
+        input_power_couplings=[0.01, 0.02, 0.05, 0.10, 0.20],
+        drop_power_couplings=[0.01, 0.02, 0.05, 0.10, 0.20],
+        round_trip_power_loss=0.02,
+        span_nm=40.0,
+        num_points=2001,
+    )
+
+    add_drop_coupling_csv = "data/sweeps/ring_add_drop_coupling_balance.csv"
+    save_ring_sweep_csv(add_drop_coupling_results, add_drop_coupling_csv)
+
+    drop_power_heatmap = "results/figures/ring_add_drop_max_drop_power_heatmap.png"
+    plot_add_drop_coupling_heatmap(
+        results=add_drop_coupling_results,
+        metric_name="max_drop_power",
+        output_path=drop_power_heatmap,
+        title="Add-drop ring max drop power",
+        colorbar_label="Max drop power",
+    )
+
+    drop_il_heatmap = "results/figures/ring_add_drop_insertion_loss_heatmap.png"
+    plot_add_drop_coupling_heatmap(
+        results=add_drop_coupling_results,
+        metric_name="drop_insertion_loss_db",
+        output_path=drop_il_heatmap,
+        title="Add-drop ring drop insertion loss",
+        colorbar_label="Drop insertion loss (dB)",
+    )
+
+    print()
+    print("Add-drop coupling balance sweep")
+    print("-------------------------------")
+    print(f"Saved add-drop coupling sweep to: {add_drop_coupling_csv}")
+    print(f"Saved max-drop-power heatmap to: {drop_power_heatmap}")
+    print(f"Saved drop-insertion-loss heatmap to: {drop_il_heatmap}")    
 
     metrics_csv = "data/sweeps/ring_all_pass_metrics.csv"
     save_ring_metrics_csv(metrics, metrics_csv)
