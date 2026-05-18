@@ -18,7 +18,7 @@ The goal is not only to generate a simulation framework, but to create a learnin
 
 Current broad focus:
 
-> Build a practical, layout-aware silicon photonics simulation framework and use it to move from waveguide mode physics to ring-resonator compact modeling.
+> Build a practical, layout-aware silicon photonics simulation framework and use it to move from waveguide mode physics to ring-resonator compact modeling, then toward couplers, S-parameters, compact-model extraction, and layout-driven circuit simulation.
 
 ---
 
@@ -38,9 +38,20 @@ Teaching style requested:
 6. Give small concrete exercises.
 7. Give professional checkpoints and short quizzes.
 
-Important habit:
+Important teaching habits:
 
-> Quiz the user after completing each major step.
+- Quiz the user after completing each major step.
+- Be critical and accurate when reviewing quiz answers.
+- Do not simply affirm partially correct answers.
+- Correct misconceptions explicitly and explain the physical intuition behind the correction.
+- Require the user to distinguish similar concepts carefully, especially:
+  - `n_eff` versus `n_g`
+  - intrinsic loss versus coupling loss
+  - propagation loss versus bend loss
+  - all-pass rings versus add-drop rings
+  - cascaded rings versus directly coupled/stacked rings
+  - field transfer functions versus power spectra
+- The goal of quizzes is to verify understanding and intuition, not just to proceed through implementation steps.
 
 The user prefers going slowly and understanding the code before implementing blindly.
 
@@ -50,13 +61,8 @@ The user prefers going slowly and understanding the code before implementing bli
 
 Repo:
 
-```text
-/Users/blow/siphotonics-framework
-```
-
-Conda environment:
-
 ```bash
+cd /Users/blow/siphotonics-framework
 conda activate siphotonics-clean
 ```
 
@@ -137,11 +143,13 @@ siphotonics-framework/
     compact_models/
       __init__.py
       ring.py
+      stacked_rings.py
 
   tests/
     test_pdk.py
     test_waveguide_mode.py
     test_ring.py
+    test_stacked_rings.py
 
   data/
     sweeps/
@@ -178,8 +186,6 @@ Important caveat:
 
 > Current wavelength/group-index sweeps keep these material indices fixed unless explicitly changed. Therefore the current group-index estimate captures waveguide dispersion only, not material dispersion.
 
----
-
 ### `src/pdk/layers.py`
 
 Defines GDS layers:
@@ -191,8 +197,6 @@ PORT = (1, 10)
 TEXT = (10, 0)
 ```
 
----
-
 ### `src/pdk/cross_sections.py`
 
 Defines the gdsfactory strip waveguide cross section.
@@ -201,8 +205,6 @@ Important distinction:
 
 - this defines layout width and GDS layer
 - it does not define optical thickness, refractive index, wavelength, or mode
-
----
 
 ### `src/pdk/specs.py`
 
@@ -215,8 +217,6 @@ StripWaveguideSpec(width_um=0.5, thickness_um=0.22, wavelength_um=1.55)
 Purpose:
 
 > Prevent layout and simulation from silently using different waveguide dimensions.
-
----
 
 ### `src/devices/straight.py`
 
@@ -236,7 +236,7 @@ straight_waveguide.gds
 
 The GDS is generated output and should normally remain untracked.
 
-Concepts already covered with the user:
+Concepts already covered:
 
 - gdsfactory components have local coordinates
 - built-in components generate ports automatically
@@ -245,6 +245,8 @@ Concepts already covered with the user:
 - layout object and simulation object are related but distinct
 
 ---
+
+## Waveguide simulation status
 
 ### `src/simulation/waveguide_mode.py`
 
@@ -277,8 +279,6 @@ results/figures/waveguide_width_sweep_eim.png
 Key teaching point:
 
 > EIM is a fast sanity estimate, not the final professional full-vector result.
-
----
 
 ### `src/simulation/waveguide_mode_numeric.py`
 
@@ -456,46 +456,183 @@ This group-index result is good enough for a first compact-model connection, but
 
 ---
 
-## `src/compact_models/ring.py`
+## Ring compact-model status: `src/compact_models/ring.py`
 
-Added first ring compact-model utility.
+`ring.py` now contains the main passive ring compact-model work.
 
-Current capabilities:
+### Current capabilities
 
 - defines `RingResonatorSpec`
 - estimates ring round-trip length
 - estimates FSR from group index
+- converts physical loss budgets into round-trip power loss:
+  - propagation loss in dB/cm
+  - bend loss in dB/turn
+  - coupler excess loss in dB/round trip
+- estimates intrinsic Q from a loss budget
 - generates simple all-pass through-port spectrum
 - saves ring spectrum CSV and plot
-- extracts ring resonance metrics:
+- extracts all-pass ring resonance metrics:
   - resonance wavelength
   - mean FSR from adjacent dips
   - extinction ratio
   - linewidth
   - loaded Q
 - runs coupling-power sweep around critical coupling
+- estimates intrinsic Q, coupling Q, and analytic loaded Q
+- compares analytic loaded Q against spectrum-extracted loaded Q
 - saves coupling sweep CSV
-- plots extinction ratio and loaded Q versus coupling
-- plots linewidth versus coupling
-- plots minimum through-transmission versus coupling
-- plots representative spectra versus coupling
+- plots:
+  - extinction ratio and loaded Q versus coupling
+  - linewidth versus coupling
+  - minimum through-transmission versus coupling
+  - representative spectra versus coupling
+  - analytic loaded Q versus spectrum-extracted loaded Q
+- computes add-drop ring through-port and drop-port spectra
+- extracts add-drop metrics:
+  - drop peak wavelength
+  - max drop power
+  - drop insertion loss
+  - through extinction
+  - mean FSR
+- sweeps add-drop input/drop coupling balance
+- plots max-drop-power and insertion-loss heatmaps
+- adds complex all-pass field transfer function
+- cascades all-pass rings by multiplying field transfer functions
+- compares:
+  - one ring
+  - two identical rings
+  - three identical rings
+  - three detuned rings
+- saves cascaded spectra CSV and plot
+- extracts cascade metrics including extinction ratio, linewidth, loaded Q, and FSR
 
-Compact-model chain now demonstrated:
+### Compact-model chain demonstrated
 
 ```text
 MPB waveguide mode
-    ↓
-n_eff(lambda)
-    ↓
-group index
-    ↓
-ring FSR
-    ↓
-all-pass ring spectrum
-    ↓
-resonance metrics
-    ↓
-coupling-dependent extinction, linewidth, and loaded Q
+    -> n_eff(lambda)
+    -> group index
+    -> ring FSR
+    -> all-pass ring spectrum
+    -> resonance metrics
+    -> coupling-dependent extinction, linewidth, and loaded Q
+    -> add-drop ring spectra and metrics
+    -> cascaded multi-ring spectra and metrics
+```
+
+### Physical loss-budget model
+
+Added a loss-budget bridge:
+
+```text
+propagation loss dB/cm
++ bend loss dB/turn
++ coupler excess loss dB/round trip
+    -> round-trip loss dB
+    -> round-trip power loss
+    -> intrinsic Q
+```
+
+Example printed result from current run:
+
+```text
+propagation loss:       2.000 dB/cm
+bend loss per turn:     0.050 dB/turn
+coupler excess loss:    0.020 dB/round trip
+round-trip loss:        0.080053 dB
+round-trip power loss:  0.018264
+intrinsic Q estimate:   45179.7
+```
+
+Important interpretation:
+
+- Straight propagation loss alone is not assumed to include bend loss.
+- Bend loss and coupler excess loss are separate loss-budget terms.
+- For the above example, bend loss and coupler excess dominate over the straight propagation contribution.
+- Bus-ring coupling loss is not part of intrinsic loss; it is an external loading channel.
+
+### Important ring concepts covered
+
+- larger radius decreases FSR
+- larger group index decreases FSR
+- `n_eff` controls resonance locations
+- `n_g` controls resonance spacing
+- all-pass through-port dips are caused by destructive interference at resonance
+- extinction ratio measures through-port dip contrast
+- linewidth measures resonance width
+- smaller linewidth means larger loaded Q
+- stronger bus-ring coupling broadens the resonance
+- loaded Q decreases as coupling increases
+- extinction peaks near critical coupling
+- minimum through power occurs near critical coupling
+- intrinsic Q is set by internal loss
+- coupling Q is set by energy leaking into the bus
+- loaded Q combines intrinsic and coupling loss channels
+- add-drop rings require balancing loading into the ring and extraction into the drop bus
+- field transfer functions should be cascaded before converting to power
+- identical cascaded rings increase rejection
+- detuned cascaded rings broaden or split the rejection feature
+
+---
+
+## Stacked-ring compact-model status: `src/compact_models/stacked_rings.py`
+
+Added a separate module for directly coupled / stacked rings.
+
+This is intentionally separate from `ring.py`.
+
+### Current capabilities
+
+- defines `TwoStackedRingSpec`
+- implements normalized temporal-coupled-mode-theory model for two directly coupled rings
+- computes through-port spectrum for:
+  - uncoupled second ring
+  - weak ring-ring coupling
+  - strong ring-ring coupling
+  - detuned second ring
+- saves stacked-ring spectra CSV and plot
+- sweeps ring-2 detuning at fixed ring-ring coupling `mu`
+- saves detuning sweep CSV and plot
+- adds tests for detuning units, nonnegative power, coupling-dependent spectrum changes, invalid parameters, and detuning sweep output
+
+### Important stacked-ring concepts covered
+
+- `mu` is a normalized ring-to-ring coupling rate.
+- `mu` controls how strongly optical energy transfers between ring 1 and ring 2.
+- Larger `mu` produces stronger resonance splitting.
+- `mu` comes physically from evanescent overlap between nearby rings.
+- Ring-to-ring coupling depends on gap, coupling arc length, waveguide width, wavelength, polarization, mode confinement, and fabrication variation.
+- Detuning one ring shifts its natural resonance relative to the other ring.
+- Zero detuning gives the most symmetric split resonances for identical rings.
+- Detuning creates asymmetric split resonances and changes modal participation.
+- A heater primarily shifts resonance wavelength through thermo-optic index change, while secondary effects can include loss, coupling changes, and thermal crosstalk.
+
+### Cascaded rings versus stacked rings
+
+Cascaded all-pass rings:
+
+```text
+bus -> ring 1 -> bus -> ring 2 -> bus -> ring 3
+```
+
+- independent ring responses multiply along the bus
+- field transfer functions cascade
+- no direct resonator-to-resonator energy exchange in the model
+
+Stacked / directly coupled rings:
+
+```text
+bus -> ring 1 <-> ring 2
+```
+
+- rings directly exchange energy
+- resonant modes hybridize
+- resonance splitting appears from coupled modes
+
+This distinction is important and should continue to be reinforced.
+
+---
 
 ## Tests
 
@@ -505,6 +642,7 @@ Current tests include:
 tests/test_pdk.py
 tests/test_waveguide_mode.py
 tests/test_ring.py
+tests/test_stacked_rings.py
 ```
 
 They check:
@@ -536,34 +674,28 @@ They check:
 - invalid loss values raise errors
 - resonance metric extraction finds resonances
 - extracted extinction ratio, FSR, linewidth, and loaded Q are positive
+- Q decomposition values are positive
+- loaded Q is less than intrinsic and coupling Q
+- stronger coupling reduces coupling Q and loaded Q
+- coupling sweep includes Q-decomposition columns
+- add-drop ring power is bounded
+- add-drop ring has resonant drop peaks
+- add-drop metric extraction works
+- add-drop coupling-balance sweep runs
+- all-pass field-derived power matches power function
+- cascaded identical rings deepen the notch
+- cascade metric extraction runs
+- loss-budget conversions are bounded and monotonic
+- higher loss budget lowers intrinsic Q
+- negative loss-budget values raise errors
 
-Added ring Q decomposition:
-- estimates intrinsic Q from round-trip loss
-- estimates coupling Q from bus-ring coupling
-- estimates analytic loaded Q from 1/Q_loaded = 1/Q_intrinsic + 1/Q_coupling
-- compares analytic loaded Q against spectrum-extracted loaded Q in the coupling sweep
-- confirms loaded Q decreases as coupling increases
+### Stacked-ring tests
 
-Added ring Q decomposition and comparison diagnostics:
-- estimates intrinsic Q from round-trip loss
-- estimates coupling Q from bus-ring coupling
-- estimates analytic loaded Q using reciprocal-Q addition
-- keeps spectrum-extracted loaded Q from linewidth
-- compares analytic loaded Q to spectrum-extracted loaded Q versus coupling
-- confirms stronger coupling lowers coupling Q and loaded Q
-
-Added add-drop ring compact model:
-- computes through-port and drop-port spectra
-- saves add-drop spectrum CSV and plot
-- added tests for bounded through/drop power and resonant drop peaks
-- demonstrated that through port dips and drop port peaks occur at resonance
-
-Added add-drop ring compact model and metrics:
-- computes through-port and drop-port spectra
-- saves add-drop spectrum CSV and plot
-- extracts drop peak wavelength, max drop power, drop insertion loss, through extinction, and mean FSR
-- added tests for bounded through/drop power, resonant drop peaks, and add-drop metric extraction
-
+- normalized wavelength detuning has expected sign and center
+- stacked-ring through power is nonnegative
+- ring-ring coupling changes the spectrum
+- invalid stacked-ring parameters raise `ValueError`
+- ring-2 detuning sweep returns expected spectra
 
 Run:
 
@@ -586,6 +718,7 @@ python -m src.devices.straight
 python -m src.simulation.waveguide_mode
 python -m src.simulation.waveguide_mode_numeric
 python -m src.compact_models.ring
+python -m src.compact_models.stacked_rings
 git status
 ```
 
@@ -596,6 +729,12 @@ cat data/sweeps/waveguide_mpb_resolution_polarization_sweep.csv
 cat data/sweeps/waveguide_mpb_padding_polarization_sweep.csv
 cat data/sweeps/waveguide_mpb_wavelength_sweep.csv
 cat data/sweeps/ring_all_pass_metrics.csv
+cat data/sweeps/ring_coupling_sweep.csv
+cat data/sweeps/ring_add_drop_metrics.csv
+cat data/sweeps/ring_add_drop_coupling_balance.csv
+cat data/sweeps/ring_cascade_metrics.csv
+cat data/sweeps/two_stacked_ring_spectra.csv
+cat data/sweeps/two_stacked_ring_detuning_sweep.csv
 ```
 
 Useful plots:
@@ -605,7 +744,19 @@ open results/figures/waveguide_mpb_band1_field.png
 open results/figures/waveguide_mpb_band1_components.png
 open results/figures/waveguide_mpb_padding_field_comparison.png
 open results/figures/waveguide_mpb_wavelength_sweep.png
+
 open results/figures/ring_all_pass_spectrum.png
+open results/figures/ring_coupling_sweep.png
+open results/figures/ring_spectra_vs_coupling.png
+open results/figures/ring_loaded_q_comparison.png
+open results/figures/ring_add_drop_spectrum.png
+open results/figures/ring_add_drop_max_drop_power_heatmap.png
+open results/figures/ring_add_drop_insertion_loss_heatmap.png
+open results/figures/ring_cascade_spectrum.png
+open results/figures/ring_loss_budget_all_pass_spectrum.png
+
+open results/figures/two_stacked_ring_spectra.png
+open results/figures/two_stacked_ring_detuning_sweep.png
 ```
 
 ---
@@ -616,26 +767,20 @@ We have a functioning mini-framework:
 
 ```text
 shared spec
-  ↓
-layout generation
-  ↓
-analytic EIM estimate
-  ↓
-numerical MPB mode solve
-  ↓
-mode validation diagnostics
-  ↓
-wavelength sweep and group-index estimate
-  ↓
-ring FSR compact model
-  ↓
-all-pass ring spectrum
-  ↓
-ring resonance metrics
-  ↓
-tests
-  ↓
-Git commits
+  -> layout generation
+  -> analytic EIM estimate
+  -> numerical MPB mode solve
+  -> mode validation diagnostics
+  -> wavelength sweep and group-index estimate
+  -> ring FSR compact model
+  -> all-pass ring spectrum
+  -> ring resonance metrics
+  -> ring Q/loss/coupling interpretation
+  -> add-drop ring compact model
+  -> cascaded ring compact model
+  -> stacked-ring coupled-mode model
+  -> tests
+  -> Git commits
 ```
 
 Current best waveguide statement:
@@ -644,7 +789,7 @@ Current best waveguide statement:
 
 Current best compact-model statement:
 
-> The framework now uses the waveguide group-index workflow to estimate ring FSR, generate an all-pass ring spectrum, and extract resonance-level metrics including FSR, extinction ratio, linewidth, and loaded Q.
+> The framework now uses the waveguide group-index workflow to estimate ring FSR, generate all-pass/add-drop/cascaded/stacked ring spectra, and extract resonance-level metrics including FSR, extinction ratio, linewidth, loaded Q, loss-budget-derived intrinsic Q, coupling-dependent behavior, and detuning-dependent stacked-ring splitting.
 
 ---
 
@@ -652,13 +797,16 @@ Current best compact-model statement:
 
 1. Waveguide `n_eff` has not been benchmarked against an independent trusted mode solver.
 2. Current group index includes waveguide dispersion only; material dispersion is not implemented.
-3. Ring model is an all-pass model only; no drop port yet.
-4. Ring coupling is wavelength independent.
-5. Ring propagation loss is represented only as round-trip power loss, not yet derived from waveguide loss in dB/cm.
-6. Bend loss is not modeled.
-7. Backscattering, resonance splitting, thermal tuning, nonlinear effects, and fabrication variation are not modeled.
-8. Field confinement fraction in silicon has not yet been quantified, only visually inspected.
-9. S-parameter extraction has not yet started.
+3. Ring models use wavelength-independent coupling.
+4. Ring propagation/bend/coupler losses are compact loss-budget terms, not EM-simulated loss values.
+5. Bend loss is not yet simulated from geometry.
+6. Backscattering / CW-CCW doublet splitting is not modeled.
+7. Thermal tuning is represented as resonance detuning, not as a full current-power-temperature-index model.
+8. Stacked-ring `mu` is normalized and not yet tied to geometry.
+9. Fabrication variation / Monte Carlo yield analysis is not implemented.
+10. Field confinement fraction in silicon has not yet been quantified, only visually inspected.
+11. S-parameter extraction has not yet started.
+12. Directional coupler simulation has not yet started, even though all ring coupling coefficients ultimately need coupler physics.
 
 ---
 
@@ -679,6 +827,14 @@ The user has worked through:
 11. ring FSR estimate
 12. all-pass ring spectrum generation
 13. ring resonance metric extraction
+14. coupling-power sweep and critical coupling
+15. intrinsic/coupling/loaded Q decomposition
+16. add-drop ring spectrum and metrics
+17. add-drop coupling-balance sweep
+18. cascaded all-pass rings with identical and detuned rings
+19. stacked-ring coupled-mode model
+20. fixed-`mu` ring detuning sweep as heater-like tuning
+21. ring loss-budget conversion from dB/cm + bend/coupler loss to round-trip power loss and intrinsic Q
 
 Important conceptual corrections already covered:
 
@@ -691,32 +847,79 @@ Important conceptual corrections already covered:
 - extinction ratio measures through-port dip contrast, not simply "light entering the ring"
 - linewidth measures the width of a resonance
 - loaded Q increases as linewidth decreases
+- coupling loss is not intrinsic loss
+- propagation loss dB/cm does not automatically include bend loss unless measured on structures containing comparable bends
+- field transfer functions should be cascaded before converting to power
+- cascaded rings and directly coupled/stacked rings are physically different
+- `mu` is a normalized ring-to-ring coupling rate, not the same thing as bus-ring `kappa^2`
+- a heater primarily shifts resonance wavelength, but can also cause secondary loss/coupling/crosstalk effects
 - current group index is waveguide-only because material dispersion is not implemented yet
 
 ---
 
-## Next recommended technical step
+## Recommended next technical step
 
 Next step after the break:
 
-Next step after the break:
+> Move from abstract ring coupling coefficients to directional coupler physics and simulation.
 
-> Add intrinsic Q, coupling Q, and loaded Q decomposition for the all-pass ring model.
+Why:
 
-Goal:
+All ring models so far use abstract coupling parameters:
 
-Explain the coupling sweep using cavity lifetime/Q language:
+```text
+power_coupling
+input_power_coupling
+drop_power_coupling
+mu
+```
 
-- intrinsic Q comes from internal round-trip loss
-- coupling Q comes from energy leaving through the bus
-- loaded Q combines both loss channels
-- stronger coupling lowers coupling Q and therefore lowers loaded Q
+The next professional bridge is to learn where those coupling values come from physically:
 
-Expected learning:
+```text
+waveguide gap
+coupling length
+wavelength
+polarization
+mode overlap
+fabrication variation
+```
 
-- why loaded Q decreases as coupling increases
-- why critical coupling maximizes extinction
-- how intrinsic loss and coupling loss determine ring behavior
+Recommended first device:
+
+> Directional coupler supermode model.
+
+Initial plan:
+
+1. Create `src/simulation/directional_coupler_supermodes.py`.
+2. Model two parallel 500 nm x 220 nm SOI strip waveguides.
+3. Use MPB/eigenmode supermodes to estimate:
+   - even supermode index
+   - odd supermode index
+   - `delta_neff = n_even - n_odd`
+   - coupling length
+4. Sweep gap.
+5. Save:
+   - `data/sweeps/directional_coupler_gap_sweep.csv`
+   - `results/figures/directional_coupler_gap_sweep.png`
+
+Expected physical trend:
+
+```text
+smaller gap -> stronger evanescent overlap -> larger delta_neff -> shorter coupling length
+larger gap  -> weaker evanescent overlap   -> smaller delta_neff -> longer coupling length
+```
+
+This should connect directly back to the ring compact-model coupling values.
+
+Alternative if continuing ring-only theory before couplers:
+
+1. Add a simple heater power model:
+   - `detuning_nm = tuning_efficiency_nm_per_mW * heater_power_mW`
+2. Add Monte Carlo fabrication detuning for multi-ring spectra.
+3. Add CW/CCW backscattering doublet model for a single ring.
+
+However, the recommended next major topic is directional couplers.
 
 ---
 

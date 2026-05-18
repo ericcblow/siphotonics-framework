@@ -19,6 +19,11 @@ from src.compact_models.ring import (
     all_pass_ring_through_field,
     cascade_all_pass_ring_power,
     extract_multiple_spectrum_metrics,
+    estimate_intrinsic_q_from_loss_budget,
+    ring_round_trip_length_cm,
+    ring_round_trip_loss_db_from_loss_budget,
+    round_trip_power_loss_from_loss_budget,
+    round_trip_power_loss_from_loss_db,
 )
 
 
@@ -415,3 +420,82 @@ def test_cascade_metric_extraction_runs():
         assert row["extinction_ratio_db"] > 0
         assert row["linewidth_nm"] > 0
         assert row["loaded_q"] > 0
+
+def test_ring_round_trip_length_cm_is_consistent():
+    spec = RingResonatorSpec(radius_um=10.0)
+
+    assert np.isclose(
+        ring_round_trip_length_cm(spec),
+        ring_round_trip_length_um(spec) / 10_000,
+    )
+
+
+def test_round_trip_power_loss_from_db_is_bounded():
+    loss = round_trip_power_loss_from_loss_db(1.0)
+
+    assert loss > 0
+    assert loss < 1
+
+
+def test_loss_budget_increases_with_bend_loss():
+    spec = RingResonatorSpec(radius_um=8.0)
+
+    no_bend = round_trip_power_loss_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=2.0,
+        bend_loss_db_per_turn=0.0,
+        coupler_excess_loss_db=0.0,
+    )
+
+    with_bend = round_trip_power_loss_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=2.0,
+        bend_loss_db_per_turn=0.1,
+        coupler_excess_loss_db=0.0,
+    )
+
+    assert with_bend > no_bend
+
+
+def test_intrinsic_q_decreases_with_higher_loss_budget():
+    spec = RingResonatorSpec(radius_um=8.0)
+
+    low_loss_q = estimate_intrinsic_q_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=1.0,
+        bend_loss_db_per_turn=0.0,
+        coupler_excess_loss_db=0.0,
+    )
+
+    high_loss_q = estimate_intrinsic_q_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=10.0,
+        bend_loss_db_per_turn=0.0,
+        coupler_excess_loss_db=0.0,
+    )
+
+    assert high_loss_q < low_loss_q
+
+
+def test_loss_budget_rejects_negative_values():
+    spec = RingResonatorSpec(radius_um=8.0)
+
+    with pytest.raises(ValueError):
+        ring_round_trip_loss_db_from_loss_budget(
+            spec=spec,
+            propagation_loss_db_per_cm=-1.0,
+        )
+
+    with pytest.raises(ValueError):
+        ring_round_trip_loss_db_from_loss_budget(
+            spec=spec,
+            propagation_loss_db_per_cm=1.0,
+            bend_loss_db_per_turn=-0.1,
+        )
+
+    with pytest.raises(ValueError):
+        ring_round_trip_loss_db_from_loss_budget(
+            spec=spec,
+            propagation_loss_db_per_cm=1.0,
+            coupler_excess_loss_db=-0.1,
+        )

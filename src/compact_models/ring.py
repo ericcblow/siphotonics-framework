@@ -51,6 +51,119 @@ def estimate_ring_fsr_um(spec: RingResonatorSpec) -> float:
     return float(fsr_um)
 
 
+def ring_round_trip_length_cm(spec: RingResonatorSpec) -> float:
+    """Return ring round-trip length in centimeters.
+
+    Since:
+        1 cm = 10,000 um
+    """
+    return ring_round_trip_length_um(spec) / 10_000
+
+
+def ring_round_trip_loss_db_from_loss_budget(
+    spec: RingResonatorSpec,
+    propagation_loss_db_per_cm: float,
+    bend_loss_db_per_turn: float = 0.0,
+    coupler_excess_loss_db: float = 0.0,
+) -> float:
+    """Estimate total intrinsic round-trip loss in dB.
+
+    Parameters
+    ----------
+    spec:
+        Ring resonator specification.
+    propagation_loss_db_per_cm:
+        Straight-equivalent waveguide propagation loss.
+    bend_loss_db_per_turn:
+        Additional bend/radiation loss for one full ring round trip.
+    coupler_excess_loss_db:
+        Additional lumped excess loss per round trip from coupler regions.
+
+    Returns
+    -------
+    float
+        Total intrinsic round-trip loss in dB.
+
+    Notes
+    -----
+    This is an intrinsic loss budget. It does not include intentional bus-ring
+    coupling loss, because coupling is an external loading channel.
+    """
+    if propagation_loss_db_per_cm < 0:
+        raise ValueError("propagation_loss_db_per_cm must be nonnegative.")
+
+    if bend_loss_db_per_turn < 0:
+        raise ValueError("bend_loss_db_per_turn must be nonnegative.")
+
+    if coupler_excess_loss_db < 0:
+        raise ValueError("coupler_excess_loss_db must be nonnegative.")
+
+    propagation_loss_db = (
+        propagation_loss_db_per_cm * ring_round_trip_length_cm(spec)
+    )
+
+    total_loss_db = (
+        propagation_loss_db
+        + bend_loss_db_per_turn
+        + coupler_excess_loss_db
+    )
+
+    return float(total_loss_db)
+
+
+def round_trip_power_loss_from_loss_db(round_trip_loss_db: float) -> float:
+    """Convert round-trip loss in dB to round-trip power loss fraction."""
+    if round_trip_loss_db < 0:
+        raise ValueError("round_trip_loss_db must be nonnegative.")
+
+    round_trip_power_transmission = 10 ** (-round_trip_loss_db / 10)
+    round_trip_power_loss = 1 - round_trip_power_transmission
+
+    return float(round_trip_power_loss)
+
+
+def round_trip_power_loss_from_loss_budget(
+    spec: RingResonatorSpec,
+    propagation_loss_db_per_cm: float,
+    bend_loss_db_per_turn: float = 0.0,
+    coupler_excess_loss_db: float = 0.0,
+) -> float:
+    """Estimate intrinsic round-trip power loss from a dB loss budget."""
+    round_trip_loss_db = ring_round_trip_loss_db_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=propagation_loss_db_per_cm,
+        bend_loss_db_per_turn=bend_loss_db_per_turn,
+        coupler_excess_loss_db=coupler_excess_loss_db,
+    )
+
+    return round_trip_power_loss_from_loss_db(round_trip_loss_db)
+
+
+def estimate_intrinsic_q_from_loss_budget(
+    spec: RingResonatorSpec,
+    propagation_loss_db_per_cm: float,
+    bend_loss_db_per_turn: float = 0.0,
+    coupler_excess_loss_db: float = 0.0,
+) -> float:
+    """Estimate intrinsic Q from a propagation/bend/coupler loss budget."""
+    round_trip_power_loss = round_trip_power_loss_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=propagation_loss_db_per_cm,
+        bend_loss_db_per_turn=bend_loss_db_per_turn,
+        coupler_excess_loss_db=coupler_excess_loss_db,
+    )
+
+    if round_trip_power_loss <= 0:
+        return float("inf")
+
+    q_factors = estimate_ring_q_factors(
+        spec=spec,
+        power_coupling=0.01,  # dummy valid value; only intrinsic_q is used
+        round_trip_power_loss=round_trip_power_loss,
+    )
+
+    return float(q_factors["intrinsic_q"])
+
 def estimate_ring_fsr_nm(spec: RingResonatorSpec) -> float:
     """Estimate ring free spectral range in nanometers."""
     return 1000 * estimate_ring_fsr_um(spec)
@@ -1060,6 +1173,41 @@ if __name__ == "__main__":
     print(f"FSR:                {fsr_um:.6f} um")
     print(f"FSR:                {fsr_nm:.3f} nm")
 
+    propagation_loss_db_per_cm = 2.0
+    bend_loss_db_per_turn = 0.05
+    coupler_excess_loss_db = 0.02
+
+    round_trip_loss_db = ring_round_trip_loss_db_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=propagation_loss_db_per_cm,
+        bend_loss_db_per_turn=bend_loss_db_per_turn,
+        coupler_excess_loss_db=coupler_excess_loss_db,
+    )
+
+    budget_round_trip_power_loss = round_trip_power_loss_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=propagation_loss_db_per_cm,
+        bend_loss_db_per_turn=bend_loss_db_per_turn,
+        coupler_excess_loss_db=coupler_excess_loss_db,
+    )
+
+    budget_intrinsic_q = estimate_intrinsic_q_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=propagation_loss_db_per_cm,
+        bend_loss_db_per_turn=bend_loss_db_per_turn,
+        coupler_excess_loss_db=coupler_excess_loss_db,
+    )
+
+    print()
+    print("Ring intrinsic loss budget")
+    print("--------------------------")
+    print(f"propagation loss:       {propagation_loss_db_per_cm:.3f} dB/cm")
+    print(f"bend loss per turn:     {bend_loss_db_per_turn:.3f} dB/turn")
+    print(f"coupler excess loss:    {coupler_excess_loss_db:.3f} dB/round trip")
+    print(f"round-trip loss:        {round_trip_loss_db:.6f} dB")
+    print(f"round-trip power loss:  {budget_round_trip_power_loss:.6f}")
+    print(f"intrinsic Q estimate:   {budget_intrinsic_q:.1f}")
+
     wavelengths_um = wavelength_grid_around_center(
         center_wavelength_um=spec.wavelength_um,
         span_nm=40.0,
@@ -1104,6 +1252,65 @@ if __name__ == "__main__":
     print(f"Saved ring spectrum to: {spectrum_csv}")
     print(f"Saved ring spectrum plot to: {spectrum_plot}")
     print(f"Saved ring metrics to: {metrics_csv}")
+
+    budget_transmission = all_pass_ring_through_power(
+        wavelengths_um=wavelengths_um,
+        spec=spec,
+        power_coupling=0.02,
+        round_trip_power_loss=budget_round_trip_power_loss,
+    )
+
+    budget_spectrum_csv = "data/sweeps/ring_loss_budget_all_pass_spectrum.csv"
+    save_ring_spectrum_csv(
+        wavelengths_um,
+        budget_transmission,
+        budget_spectrum_csv,
+    )
+
+    budget_spectrum_plot = "results/figures/ring_loss_budget_all_pass_spectrum.png"
+    plot_ring_spectrum(
+        wavelengths_um,
+        budget_transmission,
+        budget_spectrum_plot,
+    )
+
+    print(f"Saved loss-budget spectrum to: {budget_spectrum_csv}")
+    print(f"Saved loss-budget spectrum plot to: {budget_spectrum_plot}")
+
+    propagation_loss_db_per_cm = 2.0
+    bend_loss_db_per_turn = 0.05
+    coupler_excess_loss_db = 0.02
+
+    round_trip_loss_db = ring_round_trip_loss_db_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=propagation_loss_db_per_cm,
+        bend_loss_db_per_turn=bend_loss_db_per_turn,
+        coupler_excess_loss_db=coupler_excess_loss_db,
+    )
+
+    budget_round_trip_power_loss = round_trip_power_loss_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=propagation_loss_db_per_cm,
+        bend_loss_db_per_turn=bend_loss_db_per_turn,
+        coupler_excess_loss_db=coupler_excess_loss_db,
+    )
+
+    budget_intrinsic_q = estimate_intrinsic_q_from_loss_budget(
+        spec=spec,
+        propagation_loss_db_per_cm=propagation_loss_db_per_cm,
+        bend_loss_db_per_turn=bend_loss_db_per_turn,
+        coupler_excess_loss_db=coupler_excess_loss_db,
+    )
+
+    print()
+    print("Ring intrinsic loss budget")
+    print("--------------------------")
+    print(f"propagation loss:       {propagation_loss_db_per_cm:.3f} dB/cm")
+    print(f"bend loss per turn:     {bend_loss_db_per_turn:.3f} dB/turn")
+    print(f"coupler excess loss:    {coupler_excess_loss_db:.3f} dB/round trip")
+    print(f"round-trip loss:        {round_trip_loss_db:.6f} dB")
+    print(f"round-trip power loss:  {budget_round_trip_power_loss:.6f}")
+    print(f"intrinsic Q estimate:   {budget_intrinsic_q:.1f}")
 
     coupling_results = sweep_ring_coupling(
         spec=spec,
