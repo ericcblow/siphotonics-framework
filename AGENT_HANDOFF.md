@@ -544,6 +544,14 @@ Added ring Q decomposition:
 - compares analytic loaded Q against spectrum-extracted loaded Q in the coupling sweep
 - confirms loaded Q decreases as coupling increases
 
+Added ring Q decomposition and comparison diagnostics:
+- estimates intrinsic Q from round-trip loss
+- estimates coupling Q from bus-ring coupling
+- estimates analytic loaded Q using reciprocal-Q addition
+- keeps spectrum-extracted loaded Q from linewidth
+- compares analytic loaded Q to spectrum-extracted loaded Q versus coupling
+- confirms stronger coupling lowers coupling Q and loaded Q
+
 Run:
 
 ```bash
