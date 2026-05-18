@@ -537,6 +537,13 @@ They check:
 - resonance metric extraction finds resonances
 - extracted extinction ratio, FSR, linewidth, and loaded Q are positive
 
+Added ring Q decomposition:
+- estimates intrinsic Q from round-trip loss
+- estimates coupling Q from bus-ring coupling
+- estimates analytic loaded Q from 1/Q_loaded = 1/Q_intrinsic + 1/Q_coupling
+- compares analytic loaded Q against spectrum-extracted loaded Q in the coupling sweep
+- confirms loaded Q decreases as coupling increases
+
 Run:
 
 ```bash
