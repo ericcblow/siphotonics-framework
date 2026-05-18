@@ -12,6 +12,7 @@ from src.compact_models.ring import (
     extract_ring_resonance_metrics,
     ring_round_trip_length_um,
     wavelength_grid_around_center,
+    sweep_ring_coupling,
 )
 
 
@@ -213,3 +214,22 @@ def test_stronger_coupling_reduces_coupling_q():
     assert strong["coupling_q"] < weak["coupling_q"]
     assert strong["analytic_loaded_q"] < weak["analytic_loaded_q"]
 
+def test_coupling_sweep_includes_q_decomposition():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+
+    results = sweep_ring_coupling(
+        spec=spec,
+        power_couplings=[0.02, 0.05],
+        round_trip_power_loss=0.02,
+        span_nm=40.0,
+        num_points=1001,
+    )
+
+    assert len(results) == 2
+
+    for row in results:
+        assert row["intrinsic_q"] > 0
+        assert row["coupling_q"] > 0
+        assert row["analytic_loaded_q"] > 0
+        assert row["spectrum_loaded_q"] > 0
+        assert row["loaded_q"] == row["spectrum_loaded_q"]

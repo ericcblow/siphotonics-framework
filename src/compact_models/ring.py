@@ -631,6 +631,45 @@ def plot_ring_coupling_min_transmission_sweep(
     plt.savefig(output_path, dpi=200)
     plt.close()
 
+def plot_ring_loaded_q_comparison(
+    results: list[dict[str, float]],
+    output_path,
+) -> None:
+    """Plot analytic loaded Q versus spectrum-extracted loaded Q."""
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    couplings = [row["power_coupling"] for row in results]
+    spectrum_loaded_q = [row["spectrum_loaded_q"] for row in results]
+    analytic_loaded_q = [row["analytic_loaded_q"] for row in results]
+
+    plt.figure(figsize=(7, 4.5))
+    plt.plot(
+        couplings,
+        spectrum_loaded_q,
+        marker="o",
+        label="Spectrum-extracted loaded Q",
+    )
+    plt.plot(
+        couplings,
+        analytic_loaded_q,
+        marker="s",
+        linestyle="--",
+        label="Analytic loaded Q",
+    )
+    plt.xlabel("Power coupling")
+    plt.ylabel("Loaded Q")
+    plt.title("Loaded Q comparison versus coupling")
+    plt.grid(True, alpha=0.35)
+    plt.legend(loc="best")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
 if __name__ == "__main__":
     spec = RingResonatorSpec(
         radius_um=8.0,
@@ -773,3 +812,8 @@ if __name__ == "__main__":
     print(f"Saved coupling sweep plot to: {coupling_plot}")
     print(f"Saved spectra versus coupling plot to: {spectra_vs_coupling_plot}")
     print(f"Saved min-transmission sweep plot to: {min_transmission_plot}")
+
+    q_comparison_plot = "results/figures/ring_loaded_q_comparison.png"
+    plot_ring_loaded_q_comparison(coupling_results, q_comparison_plot)
+    print(f"Saved loaded-Q comparison plot to: {q_comparison_plot}")
+    
