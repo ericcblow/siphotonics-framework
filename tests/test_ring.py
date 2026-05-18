@@ -13,6 +13,7 @@ from src.compact_models.ring import (
     ring_round_trip_length_um,
     wavelength_grid_around_center,
     sweep_ring_coupling,
+    add_drop_ring_power,
 )
 
 
@@ -233,3 +234,43 @@ def test_coupling_sweep_includes_q_decomposition():
         assert row["analytic_loaded_q"] > 0
         assert row["spectrum_loaded_q"] > 0
         assert row["loaded_q"] == row["spectrum_loaded_q"]
+
+def test_add_drop_ring_power_is_bounded():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=1.55,
+        span_nm=40.0,
+        num_points=501,
+    )
+
+    through_power, drop_power = add_drop_ring_power(
+        wavelengths_um=wavelengths_um,
+        spec=spec,
+        input_power_coupling=0.05,
+        drop_power_coupling=0.05,
+        round_trip_power_loss=0.02,
+    )
+
+    assert np.all(through_power >= 0)
+    assert np.all(drop_power >= 0)
+    assert np.all(through_power <= 1.0 + 1e-12)
+    assert np.all(drop_power <= 1.0 + 1e-12)
+
+
+def test_add_drop_ring_has_drop_peaks():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=1.55,
+        span_nm=40.0,
+        num_points=501,
+    )
+
+    _, drop_power = add_drop_ring_power(
+        wavelengths_um=wavelengths_um,
+        spec=spec,
+        input_power_coupling=0.05,
+        drop_power_coupling=0.05,
+        round_trip_power_loss=0.02,
+    )
+
+    assert np.max(drop_power) - np.min(drop_power) > 0.01

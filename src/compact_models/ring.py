@@ -149,6 +149,77 @@ def all_pass_ring_through_power(
 
     return np.abs(field_transfer) ** 2
 
+def add_drop_ring_power(
+    wavelengths_um: np.ndarray,
+    spec: RingResonatorSpec,
+    input_power_coupling: float = 0.1,
+    drop_power_coupling: float = 0.1,
+    round_trip_power_loss: float = 0.02,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return through/drop power transmission for a simple add-drop ring.
+
+    This is a compact learning model for a two-bus ring resonator.
+
+    Parameters
+    ----------
+    wavelengths_um:
+        Wavelength array in microns.
+    spec:
+        Ring specification containing radius, center wavelength, and group index.
+    input_power_coupling:
+        Input-bus to ring power coupling coefficient.
+    drop_power_coupling:
+        Ring to drop-bus power coupling coefficient.
+    round_trip_power_loss:
+        Intrinsic round-trip power loss in the ring.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        through_power, drop_power
+    """
+    if not 0 <= input_power_coupling <= 1:
+        raise ValueError("input_power_coupling must be between 0 and 1.")
+
+    if not 0 <= drop_power_coupling <= 1:
+        raise ValueError("drop_power_coupling must be between 0 and 1.")
+
+    if not 0 <= round_trip_power_loss < 1:
+        raise ValueError("round_trip_power_loss must be between 0 and 1.")
+
+    wavelengths_um = np.asarray(wavelengths_um)
+
+    round_trip_length_um = ring_round_trip_length_um(spec)
+
+    t1 = np.sqrt(1 - input_power_coupling)
+    t2 = np.sqrt(1 - drop_power_coupling)
+
+    k1 = np.sqrt(input_power_coupling)
+    k2 = np.sqrt(drop_power_coupling)
+
+    a = np.sqrt(1 - round_trip_power_loss)
+
+    phase = 2 * np.pi * spec.group_index * round_trip_length_um * (
+        1 / wavelengths_um - 1 / spec.wavelength_um
+    )
+
+    denominator = 1 - a * t1 * t2 * np.exp(-1j * phase)
+
+    through_field = (
+        t1 - a * t2 * np.exp(-1j * phase)
+    ) / denominator
+
+    # Simple add-drop field model. The sqrt(a) factor represents half-round-trip
+    # propagation loss in a symmetric lumped-loss approximation.
+    drop_field = (
+        -k1 * k2 * np.sqrt(a) * np.exp(-0.5j * phase)
+    ) / denominator
+
+    through_power = np.abs(through_field) ** 2
+    drop_power = np.abs(drop_field) ** 2
+
+    return through_power, drop_power
+
 
 def estimate_dip_linewidth_um(
     wavelengths_um: np.ndarray,
@@ -390,6 +461,38 @@ def save_ring_spectrum_csv(
                 }
             )
 
+def save_add_drop_spectrum_csv(
+    wavelengths_um: np.ndarray,
+    through_power: np.ndarray,
+    drop_power: np.ndarray,
+    output_path,
+) -> None:
+    """Save add-drop ring spectrum to CSV."""
+    import csv
+    from pathlib import Path
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("w", newline="") as csvfile:
+        writer = csv.DictWriter(
+            csvfile,
+            fieldnames=["wavelength_um", "through_power", "drop_power"],
+        )
+        writer.writeheader()
+
+        for wavelength_um, through, drop in zip(
+            wavelengths_um,
+            through_power,
+            drop_power,
+        ):
+            writer.writerow(
+                {
+                    "wavelength_um": float(wavelength_um),
+                    "through_power": float(through),
+                    "drop_power": float(drop),
+                }
+            )
 
 def save_ring_sweep_csv(
     results: list[dict[str, float]],
@@ -670,6 +773,42 @@ def plot_ring_loaded_q_comparison(
     plt.savefig(output_path, dpi=200)
     plt.close()
 
+def plot_add_drop_spectrum(
+    wavelengths_um: np.ndarray,
+    through_power: np.ndarray,
+    drop_power: np.ndarray,
+    output_path,
+) -> None:
+    """Plot add-drop ring through/drop spectra."""
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    plt.figure(figsize=(8, 4.8))
+    plt.plot(
+        wavelengths_um * 1000,
+        through_power,
+        label="Through port",
+        color="tab:blue",
+    )
+    plt.plot(
+        wavelengths_um * 1000,
+        drop_power,
+        label="Drop port",
+        color="tab:orange",
+    )
+    plt.xlabel("Wavelength (nm)")
+    plt.ylabel("Power transmission")
+    plt.title("Add-drop ring spectrum")
+    plt.grid(True, alpha=0.35)
+    plt.legend(loc="best")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
 if __name__ == "__main__":
     spec = RingResonatorSpec(
         radius_um=8.0,
@@ -708,6 +847,42 @@ if __name__ == "__main__":
 
     spectrum_plot = "results/figures/ring_all_pass_spectrum.png"
     plot_ring_spectrum(wavelengths_um, transmission, spectrum_plot)
+
+    add_drop_wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=spec.wavelength_um,
+        span_nm=40.0,
+        num_points=2001,
+    )
+
+    through_power, drop_power = add_drop_ring_power(
+        wavelengths_um=add_drop_wavelengths_um,
+        spec=spec,
+        input_power_coupling=0.05,
+        drop_power_coupling=0.05,
+        round_trip_power_loss=0.02,
+    )
+
+    add_drop_csv = "data/sweeps/ring_add_drop_spectrum.csv"
+    save_add_drop_spectrum_csv(
+        add_drop_wavelengths_um,
+        through_power,
+        drop_power,
+        add_drop_csv,
+    )
+
+    add_drop_plot = "results/figures/ring_add_drop_spectrum.png"
+    plot_add_drop_spectrum(
+        add_drop_wavelengths_um,
+        through_power,
+        drop_power,
+        add_drop_plot,
+    )
+
+    print()
+    print("Add-drop ring spectrum")
+    print("----------------------")
+    print(f"Saved add-drop spectrum to: {add_drop_csv}")
+    print(f"Saved add-drop spectrum plot to: {add_drop_plot}")
 
     print()
     print(f"Saved ring spectrum to: {spectrum_csv}")
@@ -816,4 +991,3 @@ if __name__ == "__main__":
     q_comparison_plot = "results/figures/ring_loaded_q_comparison.png"
     plot_ring_loaded_q_comparison(coupling_results, q_comparison_plot)
     print(f"Saved loaded-Q comparison plot to: {q_comparison_plot}")
-    
