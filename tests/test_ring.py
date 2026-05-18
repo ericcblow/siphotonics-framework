@@ -14,7 +14,9 @@ from src.compact_models.ring import (
     wavelength_grid_around_center,
     sweep_ring_coupling,
     add_drop_ring_power,
+    extract_add_drop_metrics,
 )
+
 
 
 def test_ring_round_trip_length_is_positive():
@@ -274,3 +276,31 @@ def test_add_drop_ring_has_drop_peaks():
     )
 
     assert np.max(drop_power) - np.min(drop_power) > 0.01
+
+def test_add_drop_metric_extraction_finds_drop_peaks():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=1.55,
+        span_nm=40.0,
+        num_points=1001,
+    )
+
+    through_power, drop_power = add_drop_ring_power(
+        wavelengths_um=wavelengths_um,
+        spec=spec,
+        input_power_coupling=0.05,
+        drop_power_coupling=0.05,
+        round_trip_power_loss=0.02,
+    )
+
+    metrics = extract_add_drop_metrics(
+        wavelengths_um=wavelengths_um,
+        through_power=through_power,
+        drop_power=drop_power,
+    )
+
+    assert metrics["num_drop_peaks_found"] >= 2
+    assert metrics["max_drop_power"] > 0
+    assert metrics["drop_insertion_loss_db"] >= 0
+    assert metrics["through_extinction_ratio_db"] > 0
+    assert metrics["mean_fsr_nm"] > 0

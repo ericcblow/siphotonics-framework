@@ -220,6 +220,83 @@ def add_drop_ring_power(
 
     return through_power, drop_power
 
+def extract_add_drop_metrics(
+    wavelengths_um: np.ndarray,
+    through_power: np.ndarray,
+    drop_power: np.ndarray,
+) -> dict[str, float]:
+    """Extract simple metrics from an add-drop ring spectrum.
+
+    Metrics include:
+        - drop peak wavelength
+        - maximum drop power
+        - drop insertion loss
+        - through-port minimum
+        - through extinction ratio
+        - mean FSR from drop peaks
+    """
+    wavelengths_um = np.asarray(wavelengths_um)
+    through_power = np.asarray(through_power)
+    drop_power = np.asarray(drop_power)
+
+    if wavelengths_um.shape != through_power.shape:
+        raise ValueError("wavelengths_um and through_power must have the same shape.")
+
+    if wavelengths_um.shape != drop_power.shape:
+        raise ValueError("wavelengths_um and drop_power must have the same shape.")
+
+    if len(wavelengths_um) < 3:
+        raise ValueError("Need at least 3 wavelength points.")
+
+    # Local maxima in drop port.
+    drop_peak_indices = []
+    for i in range(1, len(drop_power) - 1):
+        if drop_power[i] > drop_power[i - 1] and drop_power[i] > drop_power[i + 1]:
+            drop_peak_indices.append(i)
+
+    if not drop_peak_indices:
+        raise ValueError("No drop peaks found.")
+
+    strongest_drop_index = max(drop_peak_indices, key=lambda i: drop_power[i])
+
+    drop_peak_wavelength_um = float(wavelengths_um[strongest_drop_index])
+    max_drop_power = float(drop_power[strongest_drop_index])
+    min_through_power = float(np.min(through_power))
+    max_through_power = float(np.max(through_power))
+
+    power_floor = 1e-15
+    safe_max_drop_power = max(max_drop_power, power_floor)
+    safe_min_through_power = max(min_through_power, power_floor)
+
+    drop_insertion_loss_db = float(-10 * np.log10(safe_max_drop_power))
+    through_extinction_ratio_db = float(
+        10 * np.log10(max_through_power / safe_min_through_power)
+    )
+
+    drop_peak_wavelengths_um = np.array(
+        [wavelengths_um[i] for i in drop_peak_indices],
+        dtype=float,
+    )
+
+    if len(drop_peak_wavelengths_um) >= 2:
+        fsr_values_um = np.diff(drop_peak_wavelengths_um)
+        mean_fsr_um = float(np.mean(fsr_values_um))
+        mean_fsr_nm = 1000 * mean_fsr_um
+    else:
+        mean_fsr_um = float("nan")
+        mean_fsr_nm = float("nan")
+
+    return {
+        "num_drop_peaks_found": float(len(drop_peak_indices)),
+        "drop_peak_wavelength_um": drop_peak_wavelength_um,
+        "max_drop_power": max_drop_power,
+        "drop_insertion_loss_db": drop_insertion_loss_db,
+        "min_through_power": min_through_power,
+        "max_through_power": max_through_power,
+        "through_extinction_ratio_db": through_extinction_ratio_db,
+        "mean_fsr_um": mean_fsr_um,
+        "mean_fsr_nm": mean_fsr_nm,
+    }
 
 def estimate_dip_linewidth_um(
     wavelengths_um: np.ndarray,
@@ -888,6 +965,37 @@ if __name__ == "__main__":
     print(f"Saved ring spectrum to: {spectrum_csv}")
     print(f"Saved ring spectrum plot to: {spectrum_plot}")
 
+
+    add_drop_metrics = extract_add_drop_metrics(
+        wavelengths_um=add_drop_wavelengths_um,
+        through_power=through_power,
+        drop_power=drop_power,
+    )
+
+    add_drop_metrics_csv = "data/sweeps/ring_add_drop_metrics.csv"
+    save_ring_metrics_csv(add_drop_metrics, add_drop_metrics_csv)
+
+    print()
+    print("Add-drop ring metrics")
+    print("---------------------")
+    print(f"drop peaks found:       {add_drop_metrics['num_drop_peaks_found']:.0f}")
+    print(
+        "drop peak wavelength:   "
+        f"{add_drop_metrics['drop_peak_wavelength_um'] * 1000:.3f} nm"
+    )
+    print(f"max drop power:         {add_drop_metrics['max_drop_power']:.6f}")
+    print(
+        "drop insertion loss:    "
+        f"{add_drop_metrics['drop_insertion_loss_db']:.3f} dB"
+    )
+    print(f"min through power:      {add_drop_metrics['min_through_power']:.6f}")
+    print(
+        "through extinction:     "
+        f"{add_drop_metrics['through_extinction_ratio_db']:.3f} dB"
+    )
+    print(f"mean FSR:               {add_drop_metrics['mean_fsr_nm']:.3f} nm")
+    print(f"Saved add-drop metrics to: {add_drop_metrics_csv}")
+    
     metrics = extract_ring_resonance_metrics(
         wavelengths_um=wavelengths_um,
         transmission=transmission,
