@@ -16,6 +16,9 @@ from src.compact_models.ring import (
     add_drop_ring_power,
     extract_add_drop_metrics,
     sweep_add_drop_coupling_balance,
+    all_pass_ring_through_field,
+    cascade_all_pass_ring_power,
+    extract_multiple_spectrum_metrics,
 )
 
 
@@ -325,3 +328,90 @@ def test_add_drop_coupling_balance_sweep_runs():
         assert row["drop_insertion_loss_db"] >= 0
         assert row["through_extinction_ratio_db"] >= 0
         assert row["mean_fsr_nm"] > 0
+
+def test_all_pass_field_power_matches_power_function():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=1.55,
+        span_nm=20.0,
+        num_points=501,
+    )
+
+    field = all_pass_ring_through_field(
+        wavelengths_um=wavelengths_um,
+        spec=spec,
+        power_coupling=0.05,
+        round_trip_power_loss=0.02,
+    )
+
+    power_from_field = np.abs(field) ** 2
+
+    power = all_pass_ring_through_power(
+        wavelengths_um=wavelengths_um,
+        spec=spec,
+        power_coupling=0.05,
+        round_trip_power_loss=0.02,
+    )
+
+    assert np.allclose(power_from_field, power)
+
+
+def test_cascaded_identical_rings_deepen_notch():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=1.55,
+        span_nm=20.0,
+        num_points=501,
+    )
+
+    one_ring = cascade_all_pass_ring_power(
+        wavelengths_um=wavelengths_um,
+        specs=[spec],
+        power_couplings=[0.05],
+        round_trip_power_losses=[0.02],
+    )
+
+    three_rings = cascade_all_pass_ring_power(
+        wavelengths_um=wavelengths_um,
+        specs=[spec, spec, spec],
+        power_couplings=[0.05, 0.05, 0.05],
+        round_trip_power_losses=[0.02, 0.02, 0.02],
+    )
+
+    assert np.min(three_rings) < np.min(one_ring)
+
+def test_cascade_metric_extraction_runs():
+    spec = RingResonatorSpec(radius_um=10.0, group_index=4.0)
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=1.55,
+        span_nm=20.0,
+        num_points=501,
+    )
+
+    spectra = {
+        "one_ring": cascade_all_pass_ring_power(
+            wavelengths_um=wavelengths_um,
+            specs=[spec],
+            power_couplings=[0.05],
+            round_trip_power_losses=[0.02],
+        ),
+        "two_rings": cascade_all_pass_ring_power(
+            wavelengths_um=wavelengths_um,
+            specs=[spec, spec],
+            power_couplings=[0.05, 0.05],
+            round_trip_power_losses=[0.02, 0.02],
+        ),
+    }
+
+    metrics = extract_multiple_spectrum_metrics(
+        wavelengths_um=wavelengths_um,
+        spectra=spectra,
+    )
+
+    assert len(metrics) == 2
+
+    for row in metrics:
+        assert row["num_resonances_found"] >= 1
+        assert row["extinction_ratio_db"] > 0
+        assert row["linewidth_nm"] > 0
+        assert row["loaded_q"] > 0
