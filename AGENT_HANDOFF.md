@@ -57,6 +57,38 @@ The user prefers going slowly and understanding the code before implementing bli
 
 ---
 
+## Long-term learning artifact
+
+The user plans to eventually organize the completed learning journey into a lecture-like PowerPoint deck.
+
+Purpose:
+
+- consolidate the device-physics intuition learned across sessions
+- turn the code framework into a teachable engineering narrative
+- create a reusable study/reference tool for future silicon photonics work
+- practice explaining devices from physical intuition through simulation workflow and compact-model extraction
+
+The deck should likely be built after major modules are complete, using the handoff file, generated plots, code milestones, and quiz corrections as source material.
+
+Potential lecture structure:
+
+1. Waveguide fundamentals and mode solving
+2. EIM versus numerical eigenmode solving
+3. MPB convergence and mode validation
+4. Group index and dispersion
+5. Ring resonator fundamentals
+6. All-pass rings, add-drop rings, and Q decomposition
+7. Cascaded and stacked rings
+8. Loss budgets and intrinsic Q
+9. Directional coupler physics
+10. S-parameter extraction and compact models
+11. Layout-driven simulation workflow
+
+This should be treated as a final learning exercise and possibly a useful reusable teaching/reference artifact.
+
+
+---
+
 ## Environment
 
 Repo:
