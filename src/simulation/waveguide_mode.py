@@ -217,7 +217,15 @@ def save_sweep_results_csv(
     with output_path.open("w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(results)
+
+        for row in results:
+            writer.writerow(
+                {
+                    "width_um": f"{row['width_um']:.2f}",
+                    "vertical_neff": f"{row['vertical_neff']:.6f}",
+                    "rectangular_neff": f"{row['rectangular_neff']:.6f}",
+                }
+            )
 
 def plot_width_sweep(
     results: list[dict[str, float]],

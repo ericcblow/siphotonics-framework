@@ -320,6 +320,36 @@ def cascade_all_pass_ring_field(
 
     return total_field
 
+def estimate_number_of_round_trips(
+    spec: RingResonatorSpec,
+    loaded_q: float,
+) -> float:
+    """Estimate how many round trips light persists in a ring.
+
+    Uses:
+
+        Q_loaded = omega_0 * tau_ph
+        t_rt = n_g * L_rt / c
+
+    Therefore:
+
+        N_rt = tau_ph / t_rt
+             = Q_loaded * lambda / (2*pi*n_g*L_rt)
+
+    This is an energy lifetime estimate, not an exact integer count.
+    """
+    if loaded_q <= 0 or not np.isfinite(loaded_q):
+        return float("nan")
+
+    round_trip_length_um = ring_round_trip_length_um(spec)
+
+    number_of_round_trips = (
+        loaded_q
+        * spec.wavelength_um
+        / (2 * np.pi * spec.group_index * round_trip_length_um)
+    )
+
+    return float(number_of_round_trips)
 
 def cascade_all_pass_ring_power(
     wavelengths_um: np.ndarray,
@@ -618,6 +648,12 @@ def sweep_ring_coupling(
             round_trip_power_loss=round_trip_power_loss,
         )
 
+        number_of_round_trips = estimate_number_of_round_trips(
+            spec=spec,
+            loaded_q=float(metrics["loaded_q"]),
+        )
+        
+
         results.append(
             {
                 "power_coupling": float(power_coupling),
@@ -632,6 +668,7 @@ def sweep_ring_coupling(
                 "mean_fsr_nm": float(metrics["mean_fsr_nm"]),
                 "min_transmission": float(metrics["min_transmission"]),
                 "max_transmission": float(metrics["max_transmission"]),
+                "number_of_round_trips": float(number_of_round_trips),
             }
         )
 
@@ -825,6 +862,60 @@ def save_ring_metrics_csv(
         writer.writeheader()
         writer.writerow(metrics)
 
+def plot_ring_q_and_round_trips_sweep(
+    results: list[dict[str, float]],
+    output_path,
+) -> None:
+    """Plot spectrum-loaded Q and estimated round trips versus coupling."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    couplings = [row["power_coupling"] for row in results]
+    loaded_q = [row["spectrum_loaded_q"] for row in results]
+    round_trips = [row["number_of_round_trips"] for row in results]
+
+    fig, ax1 = plt.subplots(figsize=(7, 4.8))
+
+    q_color = "tab:blue"
+    rt_color = "tab:orange"
+
+    q_line = ax1.plot(
+        couplings,
+        loaded_q,
+        marker="o",
+        color=q_color,
+        label="Spectrum-loaded Q",
+    )
+    ax1.set_xlabel("Power coupling")
+    ax1.set_ylabel("Loaded Q", color=q_color)
+    ax1.tick_params(axis="y", labelcolor=q_color)
+    ax1.grid(True, alpha=0.35)
+
+    ax2 = ax1.twinx()
+    rt_line = ax2.plot(
+        couplings,
+        round_trips,
+        marker="s",
+        linestyle="--",
+        color=rt_color,
+        label="Estimated round trips",
+    )
+    ax2.set_ylabel("Estimated number of round trips", color=rt_color)
+    ax2.tick_params(axis="y", labelcolor=rt_color)
+
+    lines = q_line + rt_line
+    labels = [line.get_label() for line in lines]
+    ax1.legend(lines, labels, loc="best")
+
+    plt.title(
+        "Ring photon storage versus coupling\n"
+        "Stronger coupling lowers Q and reduces round-trip lifetime",
+        fontsize=11,
+    )
+
+    fig.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close(fig)
 
 def plot_ring_spectrum(
     wavelengths_um: np.ndarray,
@@ -975,9 +1066,64 @@ def plot_ring_spectra_for_couplings(
         num_points=num_points,
     )
 
-    plt.figure(figsize=(8, 4.8))
+def plot_ring_coupling_regime_spectra(
+    spec: RingResonatorSpec,
+    round_trip_power_loss: float,
+    output_path,
+    span_nm: float = 8.0,
+    num_points: int = 4001,
+) -> None:
+    """Plot undercoupled, critical, and overcoupled spectra as subplots.
 
-    for power_coupling in power_couplings:
+    For an all-pass ring, critical coupling occurs approximately when:
+
+        power_coupling ~= round_trip_power_loss
+
+    The three panels use a common y-axis so the through-port dip depths are
+    visually comparable.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    critical_coupling = round_trip_power_loss
+
+    coupling_cases = [
+        (
+            "Undercoupled",
+            max(0.001, 0.25 * critical_coupling),
+            "weak bus-ring coupling\nshallow, narrow dip",
+        ),
+        (
+            "Critical coupling",
+            critical_coupling,
+            "coupling loss ≈ intrinsic loss\ndeepest through-port notch",
+        ),
+        (
+            "Overcoupled",
+            min(0.95, 5.0 * critical_coupling),
+            "strong bus loading\nbroader, shallower dip",
+        ),
+    ]
+
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=spec.wavelength_um,
+        span_nm=span_nm,
+        num_points=num_points,
+    )
+
+    fig, axes = plt.subplots(
+        1,
+        3,
+        figsize=(14, 4.2),
+        sharex=True,
+        sharey=True,
+        constrained_layout=True,
+    )
+
+    for ax, (regime_label, power_coupling, physical_note) in zip(
+        axes,
+        coupling_cases,
+    ):
         transmission = all_pass_ring_through_power(
             wavelengths_um=wavelengths_um,
             spec=spec,
@@ -990,26 +1136,55 @@ def plot_ring_spectra_for_couplings(
             transmission=transmission,
         )
 
-        label = (
-            f"k2={power_coupling:.3f}, "
-            f"ER={metrics['extinction_ratio_db']:.1f} dB"
+        round_trips = estimate_number_of_round_trips(
+            spec=spec,
+            loaded_q=float(metrics["loaded_q"]),
         )
 
-        plt.plot(
+        ax.plot(
             wavelengths_um * 1000,
             transmission,
-            label=label,
+            linewidth=2.0,
         )
 
-    plt.xlabel("Wavelength (nm)")
-    plt.ylabel("Through power")
-    plt.title("All-pass ring spectra versus coupling")
-    plt.grid(True, alpha=0.35)
-    plt.legend(loc="best", fontsize=8)
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=200)
-    plt.close()
+        ax.set_title(
+            f"{regime_label}\n"
+            f"k²={power_coupling:.3f}, ER={metrics['extinction_ratio_db']:.1f} dB",
+            fontsize=10,
+        )
 
+        ax.text(
+            0.04,
+            0.08,
+            (
+                f"{physical_note}\n"
+                f"linewidth={metrics['linewidth_nm']:.3f} nm\n"
+                f"Q={metrics['loaded_q']:.0f}\n"
+                f"round trips≈{round_trips:.1f}"
+            ),
+            transform=ax.transAxes,
+            fontsize=8,
+            verticalalignment="bottom",
+            bbox={
+                "boxstyle": "round",
+                "facecolor": "white",
+                "alpha": 0.85,
+            },
+        )
+
+        ax.grid(True, alpha=0.35)
+        ax.set_xlabel("Wavelength (nm)")
+
+    axes[0].set_ylabel("Through power")
+
+    fig.suptitle(
+        "All-pass ring coupling regimes\n"
+        "Undercoupled vs critical coupling vs overcoupled",
+        fontsize=13,
+    )
+
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
 
 def plot_ring_coupling_min_transmission_sweep(
     results: list[dict[str, float]],
@@ -1108,6 +1283,112 @@ def plot_add_drop_spectrum(
     plt.savefig(output_path, dpi=200)
     plt.close()
 
+def plot_add_drop_balanced_coupling_spectra(
+    spec: RingResonatorSpec,
+    balanced_power_couplings: list[float],
+    round_trip_power_loss: float,
+    output_path,
+    span_nm: float = 20.0,
+    num_points: int = 4001,
+) -> None:
+    """Plot add-drop spectra along the balanced coupling diagonal.
+
+    Each subplot uses:
+
+        input_power_coupling = drop_power_coupling
+
+    This shows how increasing balanced loading changes:
+        - drop-port peak
+        - through-port extinction
+        - resonance linewidth
+        - loaded Q
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    wavelengths_um = wavelength_grid_around_center(
+        center_wavelength_um=spec.wavelength_um,
+        span_nm=span_nm,
+        num_points=num_points,
+    )
+
+    fig, axes = plt.subplots(
+        1,
+        len(balanced_power_couplings),
+        figsize=(4.2 * len(balanced_power_couplings), 4.0),
+        sharex=True,
+        sharey=True,
+        constrained_layout=True,
+    )
+
+    if len(balanced_power_couplings) == 1:
+        axes = [axes]
+
+    for ax, power_coupling in zip(axes, balanced_power_couplings):
+        through_power, drop_power = add_drop_ring_power(
+            wavelengths_um=wavelengths_um,
+            spec=spec,
+            input_power_coupling=power_coupling,
+            drop_power_coupling=power_coupling,
+            round_trip_power_loss=round_trip_power_loss,
+        )
+
+        metrics = extract_add_drop_metrics(
+            wavelengths_um=wavelengths_um,
+            through_power=through_power,
+            drop_power=drop_power,
+        )
+
+        ax.plot(
+            wavelengths_um * 1000,
+            through_power,
+            label="Through",
+            linewidth=1.8,
+        )
+        ax.plot(
+            wavelengths_um * 1000,
+            drop_power,
+            label="Drop",
+            linewidth=1.8,
+        )
+
+        ax.set_title(
+            f"k1² = k2² = {power_coupling:.3f}\n"
+            f"Drop max = {metrics['max_drop_power']:.3f}",
+            fontsize=10,
+        )
+
+        ax.text(
+            0.04,
+            0.06,
+            (
+                f"Drop IL = {metrics['drop_insertion_loss_db']:.2f} dB\n"
+                f"Through ER = {metrics['through_extinction_ratio_db']:.1f} dB"
+            ),
+            transform=ax.transAxes,
+            fontsize=8,
+            verticalalignment="bottom",
+            bbox={
+                "boxstyle": "round",
+                "facecolor": "white",
+                "alpha": 0.85,
+            },
+        )
+
+        ax.grid(True, alpha=0.35)
+        ax.set_xlabel("Wavelength (nm)")
+
+    axes[0].set_ylabel("Power transmission")
+    axes[0].legend(loc="best", fontsize=8)
+
+    fig.suptitle(
+        "Add-drop ring spectra along balanced coupling diagonal\n"
+        "input coupling k1² equals drop coupling k2²",
+        fontsize=13,
+    )
+
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
 
 def plot_add_drop_coupling_heatmap(
     results: list[dict[str, float]],
@@ -1371,12 +1652,31 @@ if __name__ == "__main__":
     q_comparison_plot = "results/figures/ring_loaded_q_comparison.png"
     plot_ring_loaded_q_comparison(coupling_results, q_comparison_plot)
 
+    q_round_trips_plot = "results/figures/ring_q_and_round_trips_sweep.png"
+    plot_ring_q_and_round_trips_sweep(
+        coupling_results,
+        q_round_trips_plot,
+    )
+    print(f"Saved Q and round-trips sweep plot to: {q_round_trips_plot}")
+
+    coupling_regime_plot = "results/figures/ring_coupling_regime_spectra.png"
+    plot_ring_coupling_regime_spectra(
+        spec=spec,
+        round_trip_power_loss=0.02,
+        output_path=coupling_regime_plot,
+        span_nm=8.0,
+        num_points=4001,
+    )
+    print(f"Saved coupling-regime spectra plot to: {coupling_regime_plot}")
+
+
     print()
     print("Ring coupling sweep")
     print("-------------------")
     print(
         "power_coupling, extinction_ratio_db, linewidth_nm, "
-        "spectrum_loaded_q, analytic_loaded_q, coupling_q"
+        "spectrum_loaded_q, analytic_loaded_q, coupling_q, "
+        "number_of_round_trips"
     )
     for row in coupling_results:
         print(
@@ -1385,7 +1685,8 @@ if __name__ == "__main__":
             f"{row['linewidth_nm']:.4f}, "
             f"{row['spectrum_loaded_q']:.1f}, "
             f"{row['analytic_loaded_q']:.1f}, "
-            f"{row['coupling_q']:.1f}"
+            f"{row['coupling_q']:.1f}, "
+            f"{row['number_of_round_trips']:.2f}"
         )
 
     print(f"Saved coupling sweep to: {coupling_csv}")
@@ -1487,6 +1788,24 @@ if __name__ == "__main__":
         colorbar_label="Drop insertion loss (dB)",
     )
 
+    balanced_coupling_spectra_plot = (
+        "results/figures/ring_add_drop_balanced_coupling_spectra.png"
+    )
+
+    plot_add_drop_balanced_coupling_spectra(
+        spec=spec,
+        balanced_power_couplings=[0.025, 0.050, 0.100, 0.125, 0.150],
+        round_trip_power_loss=0.02,
+        output_path=balanced_coupling_spectra_plot,
+        span_nm=20.0,
+        num_points=4001,
+    )
+
+    print(
+        "Saved add-drop balanced-coupling spectra plot to: "
+        f"{balanced_coupling_spectra_plot}"
+    )
+    
     print()
     print("Add-drop coupling balance sweep")
     print("-------------------------------")
@@ -1579,6 +1898,8 @@ if __name__ == "__main__":
         spectra=cascade_spectra,
         output_path=cascade_plot,
     )
+
+
 
     print()
     print("Cascaded all-pass ring spectra")

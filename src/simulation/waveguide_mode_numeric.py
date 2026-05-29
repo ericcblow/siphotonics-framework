@@ -743,6 +743,24 @@ def plot_field_intensity(
     ]
 
     plt.plot(y_outline, z_outline, "w--", linewidth=1.5)
+    # Zoom in by showing 70% of the original plotting window.
+    zoom_fraction = 0.5
+
+    y_center = 0.0
+    z_center = 0.0
+
+    y_span = float(y_um[-1] - y_um[0])
+    z_span = float(z_um[-1] - z_um[0])
+
+    plt.xlim(
+        y_center - 0.5 * zoom_fraction * y_span,
+        y_center + 0.5 * zoom_fraction * y_span,
+    )
+    plt.ylim(
+        z_center - 0.5 * zoom_fraction * z_span,
+        z_center + 0.5 * zoom_fraction * z_span,
+    )
+
 
     plt.xlabel("Horizontal coordinate y (um)")
     plt.ylabel("Vertical coordinate z (um)")
@@ -827,6 +845,22 @@ def plot_field_components(
 
     fig, axes = plt.subplots(1, 3, figsize=(12, 3.5), constrained_layout=True)
 
+    zoom_fraction = 0.5
+    y_center = 0.0
+    z_center = 0.0
+
+    y_span = float(y_um[-1] - y_um[0])
+    z_span = float(z_um[-1] - z_um[0])
+
+    y_limits = (
+        y_center - 0.5 * zoom_fraction * y_span,
+        y_center + 0.5 * zoom_fraction * y_span,
+    )
+    z_limits = (
+        z_center - 0.5 * zoom_fraction * z_span,
+        z_center + 0.5 * zoom_fraction * z_span,
+    )
+
     for ax, (component_name, values) in zip(axes, component_data):
         image = ax.imshow(
             values.T,
@@ -835,6 +869,8 @@ def plot_field_components(
             aspect="auto",
         )
         ax.plot(y_outline, z_outline, "w--", linewidth=1.2)
+        ax.set_xlim(*y_limits)
+        ax.set_ylim(*z_limits)
         ax.set_title(component_name)
         ax.set_xlabel("y (um)")
         ax.set_ylabel("z (um)")
@@ -937,6 +973,24 @@ def plot_padding_field_comparison(
         ]
 
         ax.plot(y_outline, z_outline, "w--", linewidth=1.2)
+
+        # Zoom in by showing 70% of each subplot's original domain.
+        zoom_fraction = 0.5
+
+        y_center = 0.0
+        z_center = 0.0
+
+        y_span = float(y_um[-1] - y_um[0])
+        z_span = float(z_um[-1] - z_um[0])
+
+        ax.set_xlim(
+            y_center - 0.5 * zoom_fraction * y_span,
+            y_center + 0.5 * zoom_fraction * y_span,
+        )
+        ax.set_ylim(
+            z_center - 0.5 * zoom_fraction * z_span,
+            z_center + 0.5 * zoom_fraction * z_span,
+        )
 
         ax.set_title(
             f"padding={padding_um:.1f} um\n"

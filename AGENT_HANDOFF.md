@@ -86,6 +86,24 @@ Potential lecture structure:
 
 This should be treated as a final learning exercise and possibly a useful reusable teaching/reference artifact.
 
+Current lecture-draft status from the revisit session:
+
+- Rough lecture slides have been brought up through the stacked-ring section.
+- Slides now cover, at least conceptually:
+  - EIM equations and parameter definitions
+  - MPB as a frequency-domain eigenmode solver, not FDTD
+  - MPB field plots as eigenvectors of Maxwell's operator
+  - resolution and padding convergence, including staircasing and boundary/domain errors
+  - wavelength sweep and numerical `dn_eff/dlambda` extraction
+  - group index and the caveat that material dispersion is not yet included
+  - all-pass ring resonance, FSR, linewidth, loaded Q, and critical coupling
+  - loss-budget interpretation and intrinsic Q
+  - add-drop spectra and coupling-balance heatmap takeaways
+  - cascaded all-pass spectra
+  - stacked-ring resonance splitting and detuning
+- The lecture pass clarified several concepts and produced slide-ready equations, tables, and takeaways.
+- The next lecture module should start with directional couplers once the corresponding simulation work begins.
+
 
 ---
 
@@ -486,6 +504,33 @@ The user understands that if `dn_eff/dlambda` is negative, then `n_g > n_eff`.
 
 This group-index result is good enough for a first compact-model connection, but should not yet be treated as a fully material-dispersive group index.
 
+### Lecture-revisit clarifications
+
+The following slide-ready clarifications were developed during the lecture-review pass:
+
+- EIM solves the symmetric TE slab equation by root-finding:
+
+```text
+f(n_eff) = h tan(h a) - q = 0
+```
+
+  with `h`, `q`, `beta`, `k0`, and half-dimension `a = d/2` explicitly defined for slides.
+- EIM is used twice:
+  - vertical slab solve gives `n_eff,vertical`
+  - lateral slab solve uses `n_eff,vertical` as the lateral core index
+- MPB is a frequency-domain eigenmode solver, not an FDTD time-domain propagation simulation.
+- MPB solves Maxwell's eigenproblem for a given `kx`; Python then root-finds `kx` until the MPB band frequency equals the target frequency.
+- MPB field diagrams come from eigenvectors of the solved mode, not from launched-propagation fields.
+- Main MPB numerical pitfalls discussed for slides:
+  - staircasing of high-index-contrast geometry at low resolution
+  - boundaries too close to evanescent tails when padding is too small
+  - mode identity switching if only band number is tracked
+  - cladding-like or box modes near oxide index
+  - root-finding the wrong branch
+  - over-reporting digits beyond convergence support
+  - inconsistent color scales or axis limits in field plots
+- For lecture plots, fixed physical axis limits are preferred when comparing padding cases.
+
 ---
 
 ## Ring compact-model status: `src/compact_models/ring.py`
@@ -538,6 +583,13 @@ This group-index result is good enough for a first compact-model connection, but
   - three detuned rings
 - saves cascaded spectra CSV and plot
 - extracts cascade metrics including extinction ratio, linewidth, loaded Q, and FSR
+- recent lecture-driven additions/requests for ring visualizations include:
+  - estimating lifetime-equivalent number of round trips from loaded Q
+  - plotting loaded Q and estimated round trips versus power coupling
+  - plotting undercoupled, critically coupled, and overcoupled all-pass spectra as three separate subplots
+  - plotting add-drop spectra along the balanced coupling diagonal where `kappa1^2 = kappa2^2`
+
+Note: verify which of the lecture-driven plotting additions have been committed in the local repo before relying on them in tests or generated figures.
 
 ### Compact-model chain demonstrated
 
@@ -605,6 +657,25 @@ Important interpretation:
 - field transfer functions should be cascaded before converting to power
 - identical cascaded rings increase rejection
 - detuned cascaded rings broaden or split the rejection feature
+- linewidth for a through-port dip is measured as full width at half depth:
+
+```text
+T_half = T_min + (T_max - T_min)/2
+Delta_lambda = lambda_right - lambda_left
+Q_loaded = lambda_res / Delta_lambda
+```
+
+- lifetime-equivalent number of round trips can be estimated from loaded Q:
+
+```text
+N_rt ~= Q_loaded * lambda0 / (2*pi*n_g*L_rt)
+```
+
+  This is not a literal integer photon count; it is photon lifetime divided by round-trip time.
+- hundreds of round trips are possible only for sufficiently high loaded Q, typically `Q_loaded` in the `1e5` to `1e6` range for the current small-radius example.
+- maximum extinction and maximum Q do not occur at the same coupling. Weak coupling can give high Q but shallow dips; critical coupling gives maximum extinction but lower Q.
+- add-drop heatmaps should be interpreted as coupling-balance maps: `kappa1^2` loads power into the ring and `kappa2^2` extracts power to the drop bus.
+- high through extinction does not automatically imply low drop insertion loss because intrinsic ring loss can dissipate energy before extraction.
 
 ---
 
@@ -663,6 +734,23 @@ bus -> ring 1 <-> ring 2
 - resonance splitting appears from coupled modes
 
 This distinction is important and should continue to be reinforced.
+
+### Lecture-revisit clarifications for stacked rings
+
+- If two identical rings have the same uncoupled resonance, direct coupling does not simply make one stronger shared resonance.
+- Coupling lifts the degeneracy and forms two hybrid modes:
+  - symmetric mode
+  - antisymmetric mode
+- In a simple lossless frequency-domain picture, the hybrid frequencies are approximately:
+
+```text
+omega_+ = omega0 + mu
+omega_- = omega0 - mu
+Delta_omega ~= 2*mu
+```
+
+- Clear splitting is visible only when the coupling rate is comparable to or larger than the resonance linewidth/decay rate.
+- Detuning one ring breaks the symmetry. One hybrid mode becomes more ring-1-like and the other more ring-2-like; because only ring 1 is directly bus-coupled in the current model, detuning also changes which resonance is more visible in the through spectrum.
 
 ---
 
@@ -781,9 +869,12 @@ open results/figures/ring_all_pass_spectrum.png
 open results/figures/ring_coupling_sweep.png
 open results/figures/ring_spectra_vs_coupling.png
 open results/figures/ring_loaded_q_comparison.png
+open results/figures/ring_q_and_round_trips_sweep.png
+open results/figures/ring_coupling_regime_spectra.png
 open results/figures/ring_add_drop_spectrum.png
 open results/figures/ring_add_drop_max_drop_power_heatmap.png
 open results/figures/ring_add_drop_insertion_loss_heatmap.png
+open results/figures/ring_add_drop_balanced_coupling_spectra.png
 open results/figures/ring_cascade_spectrum.png
 open results/figures/ring_loss_budget_all_pass_spectrum.png
 
@@ -867,6 +958,14 @@ The user has worked through:
 19. stacked-ring coupled-mode model
 20. fixed-`mu` ring detuning sweep as heater-like tuning
 21. ring loss-budget conversion from dB/cm + bend/coupler loss to round-trip power loss and intrinsic Q
+22. lecture-ready EIM equation derivation and parameter table
+23. MPB eigenproblem versus FDTD distinction
+24. MPB field plots as eigenmode/eigenvector fields
+25. numerical pitfalls including staircasing, padding/domain interaction, and mode identity switching
+26. lifetime-equivalent round-trip estimate from loaded Q
+27. coupling-regime interpretation: undercoupled, critical, overcoupled
+28. add-drop balanced-coupling diagonal spectra and heatmap interpretation
+29. stacked-ring splitting as degeneracy lifting and detuning as hybrid-mode unbalancing
 
 Important conceptual corrections already covered:
 
@@ -886,6 +985,12 @@ Important conceptual corrections already covered:
 - `mu` is a normalized ring-to-ring coupling rate, not the same thing as bus-ring `kappa^2`
 - a heater primarily shifts resonance wavelength, but can also cause secondary loss/coupling/crosstalk effects
 - current group index is waveguide-only because material dispersion is not implemented yet
+- MPB is not FDTD; it solves frequency-domain eigenmodes for a given wavevector
+- MPB field plots are eigenmode field profiles, not time-propagated launch simulations
+- staircasing is a mesh/geometry representation error, especially important for high-index-contrast silicon boundaries
+- fixed physical axes and common color scales are better for comparing field plots in lecture slides
+- a lifetime-equivalent number of round trips is estimated from photon lifetime and loaded Q, not directly counted as discrete round trips
+- coupling splits identical stacked-ring resonances by lifting degeneracy; detuning then unbalances the hybrid modes
 
 ---
 

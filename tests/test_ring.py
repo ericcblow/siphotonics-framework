@@ -24,6 +24,7 @@ from src.compact_models.ring import (
     ring_round_trip_loss_db_from_loss_budget,
     round_trip_power_loss_from_loss_budget,
     round_trip_power_loss_from_loss_db,
+    estimate_number_of_round_trips,
 )
 
 
@@ -499,3 +500,44 @@ def test_loss_budget_rejects_negative_values():
             propagation_loss_db_per_cm=1.0,
             coupler_excess_loss_db=-0.1,
         )
+
+def test_number_of_round_trips_is_positive_for_positive_q():
+    spec = RingResonatorSpec(radius_um=8.0, group_index=4.0)
+
+    round_trips = estimate_number_of_round_trips(
+        spec=spec,
+        loaded_q=5000.0,
+    )
+
+    assert round_trips > 0
+
+
+def test_number_of_round_trips_increases_with_loaded_q():
+    spec = RingResonatorSpec(radius_um=8.0, group_index=4.0)
+
+    low_q_round_trips = estimate_number_of_round_trips(
+        spec=spec,
+        loaded_q=5000.0,
+    )
+    high_q_round_trips = estimate_number_of_round_trips(
+        spec=spec,
+        loaded_q=10000.0,
+    )
+
+    assert high_q_round_trips > low_q_round_trips
+
+
+def test_coupling_sweep_includes_round_trip_estimate():
+    spec = RingResonatorSpec(radius_um=8.0, group_index=4.0)
+
+    results = sweep_ring_coupling(
+        spec=spec,
+        power_couplings=[0.01, 0.02, 0.05],
+        round_trip_power_loss=0.02,
+        span_nm=20.0,
+        num_points=1001,
+    )
+
+    for row in results:
+        assert "number_of_round_trips" in row
+        assert row["number_of_round_trips"] > 0
