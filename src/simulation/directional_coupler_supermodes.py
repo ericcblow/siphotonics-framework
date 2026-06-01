@@ -499,6 +499,263 @@ def solve_even_odd_supermodes_mpb(
 
     return n_even, n_odd, diagnostics
 
+def run_resolution_convergence_sweep(
+    gaps_um: np.ndarray,
+    resolutions: list[int],
+    spec: DirectionalCouplerSpec,
+    base_settings: MpbCouplerSolveSettings,
+) -> pd.DataFrame:
+    """
+    Run MPB directional-coupler sweeps at several resolutions.
+
+    This is used to quantify numerical convergence of:
+        - n_even
+        - n_odd
+        - delta_neff
+        - L_full_um
+
+    MPB runs can be slow, so use this intentionally rather than inside pytest.
+    """
+    rows: list[dict[str, float]] = []
+
+    for resolution in resolutions:
+        settings = MpbCouplerSolveSettings(
+            resolution=resolution,
+            padding_y_um=base_settings.padding_y_um,
+            padding_z_um=base_settings.padding_z_um,
+            num_bands=base_settings.num_bands,
+            k_min_factor=base_settings.k_min_factor,
+            k_max_factor=base_settings.k_max_factor,
+            k_guess_neff=base_settings.k_guess_neff,
+            suppress_output=base_settings.suppress_output,
+        )
+
+        print()
+        print(f"Running directional-coupler MPB convergence sweep at resolution={resolution}")
+        print("--------------------------------------------------------------------------")
+
+        df = run_gap_sweep(
+            gaps_um=gaps_um,
+            spec=spec,
+            solver="mpb",
+            settings=settings,
+        )
+
+        df["resolution"] = resolution
+
+        rows.extend(df.to_dict(orient="records"))
+
+    return pd.DataFrame(rows)
+
+
+def plot_resolution_convergence(
+    df: pd.DataFrame,
+    output_path: Path,
+) -> None:
+    """
+    Plot directional-coupler convergence versus MPB resolution.
+
+    Shows:
+        - delta_neff versus gap
+        - L_full versus gap
+    """
+    required_columns = {
+        "gap_um",
+        "resolution",
+        "delta_neff",
+        "L_full_um",
+    }
+
+    missing = required_columns.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing required convergence columns: {missing}")
+
+    fig, axes = plt.subplots(2, 1, figsize=(7.5, 7.5), sharex=True)
+
+    for resolution, group in df.groupby("resolution"):
+        group = group.sort_values("gap_um")
+
+        axes[0].plot(
+            group["gap_um"],
+            group["delta_neff"],
+            marker="o",
+            label=f"res={resolution}",
+        )
+
+        axes[1].plot(
+            group["gap_um"],
+            group["L_full_um"],
+            marker="o",
+            label=f"res={resolution}",
+        )
+
+    axes[0].set_ylabel(r"$\Delta n_\mathrm{eff}$")
+    axes[0].set_title("Directional Coupler Resolution Convergence")
+    axes[0].grid(True)
+    axes[0].legend()
+
+    axes[1].set_xlabel("Gap (um)")
+    axes[1].set_ylabel(r"$L_\mathrm{full}$ (um)")
+    axes[1].grid(True)
+    axes[1].legend()
+
+    fig.tight_layout()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+    if not output_path.exists():
+        raise RuntimeError(f"Expected convergence plot was not saved: {output_path}")
+
+def summarize_resolution_difference(
+    df: pd.DataFrame,
+    low_resolution: int,
+    high_resolution: int,
+) -> pd.DataFrame:
+    """
+    Compare low-resolution and high-resolution MPB results gap by gap.
+
+    Percent difference is computed relative to the high-resolution result.
+    """
+    low = (
+        df[df["resolution"] == low_resolution]
+        .set_index("gap_um")
+        .sort_index()
+    )
+    high = (
+        df[df["resolution"] == high_resolution]
+        .set_index("gap_um")
+        .sort_index()
+    )
+
+    common_gaps = low.index.intersection(high.index)
+
+    rows: list[dict[str, float]] = []
+
+    for gap_um in common_gaps:
+        low_delta = float(low.loc[gap_um, "delta_neff"])
+        high_delta = float(high.loc[gap_um, "delta_neff"])
+
+        low_lfull = float(low.loc[gap_um, "L_full_um"])
+        high_lfull = float(high.loc[gap_um, "L_full_um"])
+
+        rows.append(
+            {
+                "gap_um": float(gap_um),
+                f"delta_neff_res_{low_resolution}": low_delta,
+                f"delta_neff_res_{high_resolution}": high_delta,
+                "delta_neff_pct_diff_vs_high": 100.0
+                * (low_delta - high_delta)
+                / high_delta,
+                f"L_full_res_{low_resolution}_um": low_lfull,
+                f"L_full_res_{high_resolution}_um": high_lfull,
+                "L_full_pct_diff_vs_high": 100.0
+                * (low_lfull - high_lfull)
+                / high_lfull,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+def compute_kappa_vs_length(
+    df: pd.DataFrame,
+    lengths_um: np.ndarray,
+) -> pd.DataFrame:
+    """
+    Compute ideal directional-coupler power coupling versus length.
+
+    Uses:
+        kappa^2(L) = sin^2(pi L / (2 L_full))
+
+    Input df must contain:
+        gap_um
+        L_full_um
+    """
+    required_columns = {"gap_um", "L_full_um"}
+    missing = required_columns.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    rows: list[dict[str, float]] = []
+
+    for _, row in df.iterrows():
+        gap_um = float(row["gap_um"])
+        l_full_um = float(row["L_full_um"])
+
+        for length_um in lengths_um:
+            kappa_power = cross_coupled_power(
+                length_um=float(length_um),
+                l_full_um=l_full_um,
+            )
+
+            rows.append(
+                {
+                    "gap_um": gap_um,
+                    "length_um": float(length_um),
+                    "kappa_power": kappa_power,
+                    "through_power": 1.0 - kappa_power,
+                    "L_full_um": l_full_um,
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+def make_practical_design_table(
+    df: pd.DataFrame,
+    target_kappa_powers: list[float] | None = None,
+    min_length_um: float = 2.0,
+    max_length_um: float = 100.0,
+) -> pd.DataFrame:
+    """
+    Create a practical directional-coupler design table.
+
+    For each gap and target kappa^2, compute the required coupler length,
+    then flag whether the length is inside a practical range.
+    """
+    if target_kappa_powers is None:
+        target_kappa_powers = [0.025, 0.05, 0.10, 0.20, 0.50]
+
+    required_columns = {"gap_um", "L_full_um"}
+    missing = required_columns.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    rows: list[dict[str, float | bool | str]] = []
+
+    for _, row in df.iterrows():
+        gap_um = float(row["gap_um"])
+        l_full_um = float(row["L_full_um"])
+
+        for kappa_power in target_kappa_powers:
+            length_um = length_for_target_kappa_power(
+                l_full_um=l_full_um,
+                kappa_power=kappa_power,
+            )
+
+            is_practical = min_length_um <= length_um <= max_length_um
+
+            if length_um < min_length_um:
+                note = "very short; fabrication/transition sensitive"
+            elif length_um > max_length_um:
+                note = "long; layout-area penalty"
+            else:
+                note = "reasonable first-pass length"
+
+            rows.append(
+                {
+                    "gap_um": gap_um,
+                    "target_kappa_power": kappa_power,
+                    "required_length_um": length_um,
+                    "L_full_um": l_full_um,
+                    "is_practical": is_practical,
+                    "note": note,
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
 def _apply_center_zoom(ax, array_shape: tuple[int, int], zoom_fraction: float) -> None:
     """
     Zoom an imshow axis into the center of a 2D array.
@@ -739,6 +996,60 @@ def run_gap_sweep(
     return pd.DataFrame(rows)
 
 
+def plot_kappa_vs_length(
+    df: pd.DataFrame,
+    output_path: Path,
+    max_length_um: float | None = None,
+) -> None:
+    """
+    Plot ideal power coupling versus physical coupler length for each gap.
+    """
+    required_columns = {"gap_um", "length_um", "kappa_power"}
+    missing = required_columns.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    fig, ax = plt.subplots(figsize=(8.0, 5.5))
+
+    for gap_um, group in df.groupby("gap_um"):
+        group = group.sort_values("length_um")
+
+        ax.plot(
+            group["length_um"],
+            group["kappa_power"],
+            label=f"gap={gap_um:.2f} um",
+        )
+
+    for target in [0.025, 0.05, 0.10, 0.20, 0.50]:
+        ax.axhline(target, linestyle="--", linewidth=0.8)
+        ax.text(
+            0.01,
+            target,
+            rf"$\kappa^2={target:.3f}$",
+            transform=ax.get_yaxis_transform(),
+            va="bottom",
+            fontsize=8,
+        )
+
+    ax.set_xlabel("Coupler length (um)")
+    ax.set_ylabel(r"Cross-coupled power $\kappa^2$")
+    ax.set_title("Ideal Directional-Coupler Power Coupling")
+    ax.grid(True)
+    ax.legend()
+
+    if max_length_um is not None:
+        ax.set_xlim(0, max_length_um)
+
+    ax.set_ylim(0, 1.02)
+
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+    if not output_path.exists():
+        raise RuntimeError(f"Expected kappa plot was not saved: {output_path}")
+    
 def plot_gap_sweep(df: pd.DataFrame, output_path: Path) -> None:
     """Plot delta_neff and coupling length versus directional-coupler gap."""
     required_columns = {
@@ -900,7 +1211,55 @@ def parse_args() -> argparse.Namespace:
         help="Number of MPB bands to solve.",
     )
 
+    parser.add_argument(
+        "--convergence",
+        action="store_true",
+        help="Run a resolution convergence comparison instead of a single sweep.",
+    )
+
+    parser.add_argument(
+        "--convergence-resolutions",
+        type=int,
+        nargs="+",
+        default=[30, 50],
+        help="List of MPB resolutions for convergence sweep.",
+    )
+
+    parser.add_argument(
+        "--kappa-length-plot",
+        action="store_true",
+        help="After the sweep, save kappa^2 versus coupler length plot.",
+    )
+
+    parser.add_argument(
+        "--max-coupler-length",
+        type=float,
+        default=100.0,
+        help="Maximum coupler length in microns for kappa^2 length plot.",
+    )
+
+    parser.add_argument(
+    "--design-table",
+    action="store_true",
+    help="Save a practical coupler design table for target kappa^2 values.",
+    )
+
+    parser.add_argument(
+        "--min-practical-length",
+        type=float,
+        default=2.0,
+        help="Minimum practical coupler length in microns for design table.",
+    )
+
+    parser.add_argument(
+        "--max-practical-length",
+        type=float,
+        default=100.0,
+        help="Maximum practical coupler length in microns for design table.",
+    )
+
     return parser.parse_args()
+
 
 
 def main() -> None:
@@ -927,6 +1286,65 @@ def main() -> None:
             0.50,
         ]
     )
+
+    if args.convergence:
+        if args.solver != "mpb":
+            raise ValueError("--convergence should be used with --solver mpb.")
+
+        data_dir = Path("data/sweeps")
+        fig_dir = Path("results/figures")
+        data_dir.mkdir(parents=True, exist_ok=True)
+        fig_dir.mkdir(parents=True, exist_ok=True)
+
+        convergence_df = run_resolution_convergence_sweep(
+            gaps_um=gaps_um,
+            resolutions=args.convergence_resolutions,
+            spec=spec,
+            base_settings=settings,
+        )
+
+        convergence_csv_path = data_dir / "directional_coupler_resolution_convergence.csv"
+        convergence_fig_path = fig_dir / "directional_coupler_resolution_convergence.png"
+
+        convergence_df.to_csv(convergence_csv_path, index=False)
+        plot_resolution_convergence(
+            df=convergence_df,
+            output_path=convergence_fig_path,
+        )
+
+        print()
+        print("Directional coupler resolution convergence")
+        print("------------------------------------------")
+        print(convergence_df.to_string(index=False))
+        print()
+        print(f"Saved convergence CSV:  {convergence_csv_path}")
+        print(f"Saved convergence plot: {convergence_fig_path}")
+
+        if len(args.convergence_resolutions) >= 2:
+            low_resolution = min(args.convergence_resolutions)
+            high_resolution = max(args.convergence_resolutions)
+
+            summary_df = summarize_resolution_difference(
+                df=convergence_df,
+                low_resolution=low_resolution,
+                high_resolution=high_resolution,
+            )
+
+            summary_csv_path = (
+                data_dir
+                / f"directional_coupler_resolution_{low_resolution}_vs_{high_resolution}.csv"
+            )
+
+            summary_df.to_csv(summary_csv_path, index=False)
+
+            print()
+            print(f"Resolution {low_resolution} vs {high_resolution} summary")
+            print("-------------------------------------------------------")
+            print(summary_df.to_string(index=False))
+            print()
+            print(f"Saved summary CSV: {summary_csv_path}")
+
+        return
 
     df = run_gap_sweep(
         gaps_um=gaps_um,
@@ -959,6 +1377,39 @@ def main() -> None:
     plot_gap_sweep(df=df, output_path=default_fig_path)
     plot_diagnostics(df=df, output_path=diag_path)
 
+    if args.kappa_length_plot:
+        lengths_um = np.linspace(0.0, args.max_coupler_length, 501)
+
+        kappa_df = compute_kappa_vs_length(
+            df=df,
+            lengths_um=lengths_um,
+        )
+
+        kappa_csv_path = data_dir / f"directional_coupler_kappa_vs_length_{suffix}.csv"
+        kappa_fig_path = fig_dir / f"directional_coupler_kappa_vs_length_{suffix}.png"
+
+        kappa_df.to_csv(kappa_csv_path, index=False)
+        plot_kappa_vs_length(
+            df=kappa_df,
+            output_path=kappa_fig_path,
+            max_length_um=args.max_coupler_length,
+        )
+
+        print(f"Saved kappa-vs-length CSV:  {kappa_csv_path}")
+        print(f"Saved kappa-vs-length plot: {kappa_fig_path}")
+
+    if args.design_table:
+        design_df = make_practical_design_table(
+            df=df,
+            min_length_um=args.min_practical_length,g
+            max_length_um=args.max_practical_length,
+        )
+
+        design_csv_path = data_dir / f"directional_coupler_design_table_{suffix}.csv"
+        design_df.to_csv(design_csv_path, index=False)
+
+        print(f"Saved design table: {design_csv_path}")
+        
     if args.solver == "mpb":
         field_plot_path = fig_dir / "directional_coupler_fields_gap_sweep.png"
 

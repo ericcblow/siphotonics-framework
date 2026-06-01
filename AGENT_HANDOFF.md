@@ -130,6 +130,7 @@ Confirmed working tools:
 - gdsfactory 9.41.0
 - SAX 0.17.0
 - pytest
+- Femwell should be considered as an additional open-source FEM/eigenmode option when useful, especially for mode solving, bent/curved cross-section studies, and independent benchmarking against MPB/Meep.
 - VS Code
 - KLayout separately
 
@@ -189,6 +190,7 @@ siphotonics-framework/
       __init__.py
       waveguide_mode.py
       waveguide_mode_numeric.py
+      directional_coupler_supermodes.py
 
     compact_models/
       __init__.py
@@ -839,12 +841,17 @@ python -m src.simulation.waveguide_mode
 python -m src.simulation.waveguide_mode_numeric
 python -m src.compact_models.ring
 python -m src.compact_models.stacked_rings
+python -m src.simulation.directional_coupler_supermodes --solver mpb --resolution 30 --num-bands 4
+python -m src.simulation.directional_coupler_supermodes --solver mpb --num-bands 4 --convergence --convergence-resolutions 30 50
 git status
 ```
 
 Useful output files to inspect:
 
 ```bash
+cat data/sweeps/directional_coupler_gap_sweep_mpb.csv
+cat data/sweeps/directional_coupler_resolution_30_vs_50.csv
+cat data/sweeps/directional_coupler_design_table_mpb.csv
 cat data/sweeps/waveguide_mpb_resolution_polarization_sweep.csv
 cat data/sweeps/waveguide_mpb_padding_polarization_sweep.csv
 cat data/sweeps/waveguide_mpb_wavelength_sweep.csv
@@ -860,6 +867,11 @@ cat data/sweeps/two_stacked_ring_detuning_sweep.csv
 Useful plots:
 
 ```bash
+open results/figures/directional_coupler_gap_sweep_mpb.png
+open results/figures/directional_coupler_resolution_convergence.png
+open results/figures/directional_coupler_fields_gap_sweep.png
+open results/figures/directional_coupler_fields_gap_sweep_zoom.png
+open results/figures/directional_coupler_kappa_vs_length_mpb.png
 open results/figures/waveguide_mpb_band1_field.png
 open results/figures/waveguide_mpb_band1_components.png
 open results/figures/waveguide_mpb_padding_field_comparison.png
@@ -884,6 +896,205 @@ open results/figures/two_stacked_ring_detuning_sweep.png
 
 ---
 
+---
+
+## Directional coupler supermode status: `src/simulation/directional_coupler_supermodes.py`
+
+A new directional-coupler supermode module has been developed to bridge abstract ring coupling coefficients to physical coupler geometry.
+
+### Current capabilities
+
+- Defines `DirectionalCouplerSpec` for a 500 nm x 220 nm SOI strip directional coupler.
+- Defines `MpbCouplerSolveSettings` for MPB resolution, padding, band count, and root-finding settings.
+- Supports two solver modes:
+  - `mock`: exponential gap-dependence model for quick pipeline testing.
+  - `mpb`: Meep/MPB supermode extraction for two parallel waveguides.
+- Uses MPB `find_k` to extract guided supermode effective indices at 1550 nm.
+- Selects the two largest distinct guided effective indices as first-pass even/odd supermode candidates.
+- Computes:
+  - `n_even`
+  - `n_odd`
+  - `delta_neff = n_even - n_odd`
+  - `L_full_um = lambda / (2 delta_neff)`
+  - `L_3dB_um = L_full_um / 2`
+- Adds target-coupling design columns for selected `kappa^2` values.
+- Generates ideal `kappa^2` versus coupler-length curves from the extracted supermode splitting.
+- Generates practical design tables mapping target `kappa^2` to required coupling length.
+- Adds resolution convergence mode comparing MPB resolution 30 versus 50.
+- Adds field-validation plots for selected bands across several gaps, including full-view and zoomed versions.
+
+### Important commands
+
+Run the standard MPB gap sweep:
+
+```bash
+python -m src.simulation.directional_coupler_supermodes --solver mpb --resolution 50 --num-bands 4
+```
+
+Run fast/debug field validation:
+
+```bash
+python -m src.simulation.directional_coupler_supermodes --solver mpb --resolution 30 --num-bands 4
+```
+
+Run resolution convergence:
+
+```bash
+python -m src.simulation.directional_coupler_supermodes \
+  --solver mpb \
+  --num-bands 4 \
+  --convergence \
+  --convergence-resolutions 30 50
+```
+
+Run design-facing outputs:
+
+```bash
+python -m src.simulation.directional_coupler_supermodes \
+  --solver mpb \
+  --resolution 50 \
+  --num-bands 4 \
+  --kappa-length-plot \
+  --design-table \
+  --max-coupler-length 120
+```
+
+### Key numerical results: resolution 50 baseline
+
+For two 500 nm x 220 nm SOI strip waveguides in oxide at 1550 nm, MPB resolution 50 produced approximately:
+
+```text
+gap_um   delta_neff   L_full_um   L_3dB_um
+0.10     0.053810     14.40       7.20
+0.15     0.031802     24.37       12.18
+0.20     0.020293     38.19       19.10
+0.25     0.013339     58.10       29.05
+0.30     0.008547     90.68       45.34
+0.40     0.003549     218.39      109.20
+0.50     0.001526     507.90      253.95
+```
+
+Physical trend confirmed:
+
+```text
+larger gap -> weaker evanescent overlap -> smaller delta_neff -> longer coupling length
+```
+
+### Resolution convergence: 30 versus 50 px/um
+
+The resolution comparison showed that `L_full` differs by roughly 1-6% between 30 and 50 px/um across the swept gaps:
+
+```text
+gap_um  delta_neff_pct_diff_vs_high  L_full_pct_diff_vs_high
+0.10     3.19                         -3.10
+0.15     2.55                         -2.48
+0.20    -4.19                          4.37
+0.25    -3.97                          4.13
+0.30     4.08                         -3.92
+0.40    -0.87                          0.88
+0.50     6.34                         -5.96
+```
+
+Interpretation:
+
+- Resolution 30 is useful for fast debugging and field-plot exploration.
+- Resolution 50 is the current trusted baseline for first-pass design.
+- These are not final PDK-grade values; they still need field-symmetry validation, padding checks, and independent benchmarking.
+
+### Field-validation plots
+
+Field plots now show selected MPB bands across multiple gaps, instead of all bands for one gap.
+
+Expected outputs:
+
+```text
+results/figures/directional_coupler_fields_gap_sweep.png
+results/figures/directional_coupler_fields_gap_sweep_zoom.png
+```
+
+Purpose:
+
+- Inspect how candidate modes evolve as gap changes.
+- Catch mode switching or cladding-like modes.
+- Build intuition for even/odd supermodes and TE-like field confinement.
+
+Important implementation lesson:
+
+- The first attempt to call `get_efield()` directly failed because MPB required `get_dfield()` before converting D to E.
+- Field extraction was patched by calling `mode_solver.get_dfield(band)` before `mode_solver.get_efield(band, bloch_phase=True)`.
+- The field plot was changed from “all bands at one gap” to “selected bands across several gaps,” which is more useful for mode-continuity validation.
+
+### Coupler design outputs
+
+The module can now produce:
+
+```text
+data/sweeps/directional_coupler_gap_sweep_mpb.csv
+results/figures/directional_coupler_gap_sweep_mpb.png
+data/sweeps/directional_coupler_resolution_convergence.csv
+data/sweeps/directional_coupler_resolution_30_vs_50.csv
+results/figures/directional_coupler_resolution_convergence.png
+data/sweeps/directional_coupler_kappa_vs_length_mpb.csv
+results/figures/directional_coupler_kappa_vs_length_mpb.png
+data/sweeps/directional_coupler_design_table_mpb.csv
+results/figures/directional_coupler_design_map_mpb.png
+results/figures/directional_coupler_fields_gap_sweep.png
+results/figures/directional_coupler_fields_gap_sweep_zoom.png
+```
+
+Design interpretation learned:
+
+- Small gaps are compact but fabrication/gap sensitive.
+- Large gaps are more tolerant but require long couplers.
+- Around 0.15-0.30 um is likely a useful first-pass design region for moderate coupling.
+- Around 0.40-0.50 um can be useful for weak coupling but becomes long for stronger coupling.
+
+### Directional coupler lessons learned
+
+Key physical chain:
+
+```text
+gap -> even/odd supermode splitting -> coupling length -> target kappa^2 length
+```
+
+The central equations used:
+
+```text
+delta_neff = n_even - n_odd
+L_full = lambda / (2 delta_neff)
+L_3dB = L_full / 2
+kappa^2(L) = sin^2(pi L / (2 L_full))
+L(kappa^2) = 2 L_full / pi * asin(sqrt(kappa^2))
+```
+
+Conceptual distinction reinforced:
+
+- The MPB supermode model is an infinite uniform coupler model.
+- It predicts ideal beating between even and odd modes.
+- It does not yet include finite input/output transitions, reflections, radiation, excess loss, or port-based S-parameters.
+
+### Current directional-coupler caveats
+
+1. Even/odd selection currently uses the two largest distinct guided `n_eff` values; this is useful but not final mode tracking.
+2. Field validation is visual/diagnostic rather than fully automated.
+3. MPB field plots at fixed `k_guess` are validation plots, not exact field plots at each `find_k` root.
+4. Coupler design tables are based on ideal, symmetric, lossless supermode beating.
+5. Finite-length coupler transitions and S-parameters have not yet been simulated.
+6. Wavelength dependence of coupling is not yet included.
+7. Results have not been benchmarked against Femwell, Lumerical MODE/EME, Tidy3D, or another independent solver.
+
+### Open-source solver note
+
+Future simulation lessons should consider additional open-source tools when useful:
+
+- **MPB/Meep**: current eigenmode and future FDTD workflow.
+- **Femwell**: useful candidate for FEM eigenmode solving, independent benchmarking of effective index/supermode splitting, and potentially curved/bent waveguide cross-section studies.
+- **gdsfactory**: layout/PCell and design-rule-aware workflows.
+- **SAX**: circuit-level compact modeling after S-parameter extraction.
+- **Tidy3D**: Python-driven cloud FDTD option when appropriate.
+
+Femwell should not replace MPB automatically, but it should be considered when FEM geometry handling, independent benchmarking, or finite-element cross-section studies would strengthen the learning objective.
+
 ## Current status
 
 We have a functioning mini-framework:
@@ -902,6 +1113,9 @@ shared spec
   -> add-drop ring compact model
   -> cascaded ring compact model
   -> stacked-ring coupled-mode model
+  -> directional coupler MPB supermode extraction
+  -> directional coupler convergence and field validation
+  -> directional coupler design-table post-processing
   -> tests
   -> Git commits
 ```
@@ -913,6 +1127,10 @@ Current best waveguide statement:
 Current best compact-model statement:
 
 > The framework now uses the waveguide group-index workflow to estimate ring FSR, generate all-pass/add-drop/cascaded/stacked ring spectra, and extract resonance-level metrics including FSR, extinction ratio, linewidth, loaded Q, loss-budget-derived intrinsic Q, coupling-dependent behavior, and detuning-dependent stacked-ring splitting.
+
+Current best directional-coupler statement:
+
+> MPB supermode extraction now gives a first-pass geometry-to-coupling bridge for two parallel 500 nm x 220 nm SOI strip waveguides. The framework extracts `n_even`, `n_odd`, `delta_neff`, `L_full`, target `kappa^2` lengths, convergence comparisons, and field-validation plots across gap.
 
 ---
 
@@ -929,7 +1147,9 @@ Current best compact-model statement:
 9. Fabrication variation / Monte Carlo yield analysis is not implemented.
 10. Field confinement fraction in silicon has not yet been quantified, only visually inspected.
 11. S-parameter extraction has not yet started.
-12. Directional coupler simulation has not yet started, even though all ring coupling coefficients ultimately need coupler physics.
+12. Directional coupler supermode simulation has started and works for first-pass design, but finite-length coupler S-parameter extraction has not yet started.
+13. Directional coupler coupling is still treated as ideal lossless supermode beating; finite transitions, reflections, radiation, excess loss, and broadband complex phase are not yet modeled.
+14. Femwell has not yet been integrated but should be considered as an additional open-source FEM/eigenmode benchmark where useful.
 
 ---
 
@@ -966,6 +1186,12 @@ The user has worked through:
 27. coupling-regime interpretation: undercoupled, critical, overcoupled
 28. add-drop balanced-coupling diagonal spectra and heatmap interpretation
 29. stacked-ring splitting as degeneracy lifting and detuning as hybrid-mode unbalancing
+30. directional coupler even/odd supermode intuition
+31. `delta_neff` as the source of power beating and coupling length
+32. gap sweep trend: smaller gap gives larger splitting and shorter coupling length
+33. MPB resolution convergence for directional coupler supermodes
+34. field-validation plots across selected bands and gaps
+35. difference between infinite-supermode coupler estimates and finite-length coupler S-parameters
 
 Important conceptual corrections already covered:
 
@@ -991,6 +1217,8 @@ Important conceptual corrections already covered:
 - fixed physical axes and common color scales are better for comparing field plots in lecture slides
 - a lifetime-equivalent number of round trips is estimated from photon lifetime and loaded Q, not directly counted as discrete round trips
 - coupling splits identical stacked-ring resonances by lifting degeneracy; detuning then unbalances the hybrid modes
+- directional coupler supermode extraction is not the same as finite-device S-parameter extraction
+- a design table is useful, but the next simulation-skill step is finite-length coupler simulation with sources, monitors, PML, mesh, and port/modal power extraction
 
 ---
 
@@ -998,65 +1226,126 @@ Important conceptual corrections already covered:
 
 Next step after the break:
 
-> Move from abstract ring coupling coefficients to directional coupler physics and simulation.
+> Move from infinite directional-coupler supermode estimates to finite-length directional coupler simulation and S-parameter extraction.
 
 Why:
 
-All ring models so far use abstract coupling parameters:
+The current directional-coupler module is useful for first-pass design:
 
 ```text
-power_coupling
-input_power_coupling
-drop_power_coupling
-mu
+gap -> delta_neff -> L_full -> target kappa^2 length
 ```
 
-The next professional bridge is to learn where those coupling values come from physically:
+But it does not yet build the next layer of simulation skill. The next learning objective is to simulate a real finite coupler with:
 
 ```text
-waveguide gap
-coupling length
-wavelength
-polarization
-mode overlap
-fabrication variation
+input waveguides
+finite coupling region
+output waveguides
+ports
+source setup
+monitors
+PML
+mesh choices
+through/cross/reflection/excess-loss extraction
 ```
 
-Recommended first device:
+### Next Section 1: finite-length directional coupler simulation
 
-> Directional coupler supermode model.
+Goal:
 
-Initial plan:
+> Pick a gap, e.g. `g = 0.20 um`, use the supermode result to predict `L_3dB`, then simulate finite couplers with lengths around that value and compare measured through/cross power to the ideal supermode prediction.
 
-1. Create `src/simulation/directional_coupler_supermodes.py`.
-2. Model two parallel 500 nm x 220 nm SOI strip waveguides.
-3. Use MPB/eigenmode supermodes to estimate:
-   - even supermode index
-   - odd supermode index
-   - `delta_neff = n_even - n_odd`
-   - coupling length
-4. Sweep gap.
-5. Save:
-   - `data/sweeps/directional_coupler_gap_sweep.csv`
-   - `results/figures/directional_coupler_gap_sweep.png`
-
-Expected physical trend:
+Recommended module:
 
 ```text
-smaller gap -> stronger evanescent overlap -> larger delta_neff -> shorter coupling length
-larger gap  -> weaker evanescent overlap   -> smaller delta_neff -> longer coupling length
+src/simulation/directional_coupler_finite.py
 ```
 
-This should connect directly back to the ring compact-model coupling values.
+Possible outputs:
 
-Alternative if continuing ring-only theory before couplers:
+```text
+data/sweeps/directional_coupler_length_sweep_fdtd.csv
+results/figures/directional_coupler_length_sweep_fdtd.png
+```
 
-1. Add a simple heater power model:
-   - `detuning_nm = tuning_efficiency_nm_per_mW * heater_power_mW`
-2. Add Monte Carlo fabrication detuning for multi-ring spectra.
-3. Add CW/CCW backscattering doublet model for a single ring.
+Key columns:
 
-However, the recommended next major topic is directional couplers.
+```text
+gap_um
+length_um
+through_power
+cross_power
+reflected_power
+excess_loss
+ideal_cross_power
+ideal_through_power
+```
+
+Primary simulation lessons:
+
+- mode source placement and polarization
+- output monitor placement
+- guided-mode power versus raw field intensity
+- PML distance and thickness
+- mesh resolution around the gap
+- finite transition effects
+- comparison between finite-device simulation and infinite-supermode theory
+
+Solver guidance:
+
+- Open-source route: start with Meep FDTD for learning source/monitor/PML/mesh issues.
+- Professional/commercial analog: Lumerical MODE EME is often better for finite coupler length sweeps.
+- Femwell may be useful for independent FEM eigenmode benchmarking and possibly cross-section studies before/alongside FDTD.
+
+### Next Section 2: S-parameter extraction and compact-model fitting
+
+Goal:
+
+> Extract complex coupler S-parameters versus wavelength and fit a reusable compact model for circuit simulation.
+
+A directional coupler should eventually be represented by complex quantities such as:
+
+```text
+S21(lambda): through amplitude
+S31(lambda): cross amplitude
+S11(lambda): reflection amplitude
+loss(lambda): excess/radiated/non-guided power
+```
+
+This matters because `kappa^2` alone loses:
+
+- phase
+- reflection
+- excess loss
+- wavelength dependence
+- port convention
+- mode purity
+
+Recommended modules:
+
+```text
+src/simulation/directional_coupler_sparameters.py
+src/compact_models/directional_coupler.py
+```
+
+Possible outputs:
+
+```text
+data/sparameters/directional_coupler_sparams.csv
+data/sparameters/directional_coupler_sparams.npz
+results/figures/directional_coupler_sparams.png
+```
+
+Professional checkpoint:
+
+> The user should be able to explain why an ideal power coupling value `kappa^2` is insufficient for circuit simulation and why complex S-parameters are needed for rings, MZIs, and larger photonic circuits.
+
+### Do not over-polish design tables now
+
+The design-table work is useful and should remain in the module, but the user correctly identified that it is less valuable for simulation-skill development than finite-device simulation and S-parameter extraction.
+
+The next session should start with finite directional-coupler simulation, not more design-table refinement.
 
 ---
 
