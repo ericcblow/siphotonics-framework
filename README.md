@@ -14,6 +14,7 @@ Core tools:
 - Meep
 - SAX
 - KLayout
+- Femwell
 - pytest
 
 ## Project structure
